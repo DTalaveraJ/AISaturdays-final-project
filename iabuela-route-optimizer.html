@@ -510,9 +510,24 @@ function showResults(ordered, summary) {
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────
-addStop('Mercadona, Móstoles, Madrid');
-addStop('Carrefour, Móstoles, Madrid');
-addStop('Lidl, Leganés, Madrid');
+(function boot() {
+  const p = new URLSearchParams(window.location.search);
+  const key = p.get('apikey');
+  if (key) document.getElementById('apiKey').value = key;
+  const m = p.get('mode');
+  if (m) {
+    document.querySelectorAll('.mbtn').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+    mode = m;
+  }
+  const urlStops = p.getAll('stop');
+  if (urlStops.length > 0) {
+    urlStops.forEach(s => addStop(decodeURIComponent(s)));
+  } else {
+    addStop('Mercadona, Móstoles, Madrid');
+    addStop('Carrefour, Móstoles, Madrid');
+    addStop('Lidl, Leganés, Madrid');
+  }
+})();
 </script>
 </body>
 </html>
