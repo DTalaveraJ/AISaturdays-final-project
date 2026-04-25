@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IAbuela · Optimizador de Ruta</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root {
+  --navy:        #0d1b3e;
+  --navy-mid:    #152040;
+  --navy-panel:  rgba(18,30,62,0.88);
+  --indigo:      #2d4fbd;
+  --violet:      #6b72e8;
+  --soft-violet: #a5abf5;
+  --gold:        #e8c97a;
+  --white:       #ffffff;
+  --danger:      #e85a6b;
+  --success:     #4ecb8d;
+  --muted:       rgba(255,255,255,0.42);
+  --border:      rgba(107,114,232,0.18);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;overflow:hidden;}
+body{
+  background:var(--navy);color:var(--white);
+  font-family:'DM Sans',sans-serif;
+  display:flex;flex-direction:column;
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 60% 40% at 15% 0%,rgba(45,79,189,.22) 0%,transparent 60%),
+    radial-gradient(ellipse 50% 50% at 90% 95%,rgba(107,114,232,.14) 0%,transparent 55%);
+}
+
+/* HEADER */
+header{
+  position:relative;z-index:20;flex-shrink:0;
+  padding:.85rem 2rem;display:flex;align-items:center;gap:.85rem;
+  border-bottom:1px solid var(--border);
+  background:rgba(13,27,62,.75);backdrop-filter:blur(16px);
+}
+.logo-icon{
+  width:36px;height:36px;border-radius:9px;
+  background:linear-gradient(135deg,var(--violet),var(--indigo));
+  display:flex;align-items:center;justify-content:center;font-size:1.15rem;
+}
+.logo-text{font-family:'Playfair Display',serif;font-size:1.25rem;font-weight:700;}
+.logo-text span{color:var(--soft-violet);}
+.hpill{
+  margin-left:auto;
+  border:1px solid var(--border);background:rgba(107,114,232,.1);
+  color:var(--soft-violet);font-size:.68rem;font-weight:500;letter-spacing:.1em;
+  text-transform:uppercase;padding:.25rem .75rem;border-radius:100px;
+}
+
+/* LAYOUT */
+.layout{position:relative;z-index:1;flex:1;display:flex;overflow:hidden;}
+
+/* SIDEBAR */
+.sidebar{
+  width:390px;flex-shrink:0;
+  background:var(--navy-panel);backdrop-filter:blur(18px);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.sb{flex:1;overflow-y:auto;padding:1.5rem;scrollbar-width:thin;scrollbar-color:rgba(107,114,232,.2) transparent;}
+
+.st{font-family:'Playfair Display',serif;font-size:.97rem;font-weight:700;margin-bottom:.22rem;}
+.ss{font-size:.78rem;color:var(--muted);line-height:1.55;margin-bottom:1.1rem;}
+
+/* api key */
+.api-row{display:flex;gap:.45rem;align-items:center;margin-bottom:1.3rem;}
+.api-row input{
+  flex:1;background:rgba(255,255,255,.05);border:1px solid var(--border);
+  border-radius:8px;color:var(--white);padding:.55rem .85rem;
+  font-family:'DM Sans',sans-serif;font-size:.81rem;transition:border-color .2s;
+}
+.api-row input:focus{outline:none;border-color:var(--violet);}
+.api-row a{font-size:.7rem;color:var(--soft-violet);text-decoration:none;white-space:nowrap;}
+.api-row a:hover{color:var(--white);}
+
+.divider{height:1px;background:var(--border);margin:1.1rem 0;}
+
+/* mode */
+.mode-row{display:flex;gap:.4rem;margin-bottom:1.1rem;}
+.mbtn{
+  flex:1;padding:.52rem .25rem;
+  background:rgba(255,255,255,.04);border:1px solid var(--border);
+  border-radius:8px;color:var(--muted);
+  font-family:'DM Sans',sans-serif;font-size:.77rem;cursor:pointer;transition:all .18s;
+}
+.mbtn.active{background:rgba(107,114,232,.2);border-color:var(--violet);color:var(--white);}
+.mbtn:hover:not(.active){border-color:rgba(107,114,232,.4);color:var(--white);}
+
+/* stops */
+.stops-list{display:flex;flex-direction:column;gap:.55rem;}
+.stop-item{
+  display:flex;align-items:center;gap:.6rem;
+  background:rgba(255,255,255,.04);border:1px solid var(--border);
+  border-radius:10px;padding:.58rem .8rem;
+  animation:sIn .22s ease;transition:border-color .2s;
+}
+.stop-item:hover{border-color:rgba(107,114,232,.38);}
+@keyframes sIn{from{opacity:0;transform:translateY(-5px);}to{opacity:1;transform:translateY(0);}}
+.sbadge{
+  width:25px;height:25px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:.69rem;font-weight:700;
+  background:linear-gradient(135deg,var(--violet),var(--indigo));
+}
+.sbadge.org{background:linear-gradient(135deg,var(--success),#2aaa6a);}
+.sbadge.dst{background:linear-gradient(135deg,var(--gold),#c49a3a);}
+.sinput{flex:1;background:none;border:none;color:var(--white);font-family:'DM Sans',sans-serif;font-size:.85rem;}
+.sinput::placeholder{color:var(--muted);}
+.sinput:focus{outline:none;}
+.srem{background:none;border:none;color:var(--muted);cursor:pointer;font-size:.9rem;transition:color .15s;}
+.srem:hover{color:var(--danger);}
+
+.add-btn{
+  width:100%;margin-top:.55rem;
+  background:rgba(107,114,232,.07);border:1px dashed rgba(107,114,232,.28);
+  color:var(--soft-violet);padding:.6rem;border-radius:10px;
+  font-family:'DM Sans',sans-serif;font-size:.82rem;cursor:pointer;transition:all .2s;
+}
+.add-btn:hover{background:rgba(107,114,232,.18);border-color:var(--violet);color:var(--white);}
+
+/* optimize btn */
+.opt-btn{
+  width:100%;padding:.9rem;margin-top:.45rem;
+  background:linear-gradient(135deg,var(--violet),var(--indigo));
+  border:none;border-radius:12px;color:var(--white);
+  font-family:'Playfair Display',serif;font-size:.98rem;font-weight:700;
+  cursor:pointer;transition:all .22s;
+}
+.opt-btn:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 26px rgba(107,114,232,.45);}
+.opt-btn:disabled{opacity:.42;cursor:not-allowed;transform:none;}
+.opt-btn .spin{
+  display:none;width:16px;height:16px;margin:0 auto;
+  border:2px solid rgba(255,255,255,.3);border-top-color:#fff;
+  border-radius:50%;animation:spin .6s linear infinite;
+}
+.opt-btn.loading .lbl{display:none;}
+.opt-btn.loading .spin{display:block;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* error / status */
+.msg{
+  display:none;margin-top:.8rem;
+  background:rgba(232,90,107,.1);border:1px solid rgba(232,90,107,.28);
+  border-radius:9px;padding:.75rem .9rem;
+  font-size:.8rem;color:#f5a0aa;line-height:1.5;
+}
+.msg.info{background:rgba(107,114,232,.1);border-color:rgba(107,114,232,.28);color:var(--soft-violet);}
+.msg.show{display:block;animation:sIn .2s ease;}
+
+/* results */
+.results{display:none;margin-top:1.1rem;}
+.results.show{display:block;animation:sIn .3s ease;}
+.stats-row{display:flex;gap:.4rem;margin-bottom:.85rem;}
+.sc{
+  flex:1;text-align:center;
+  background:rgba(107,114,232,.1);border:1px solid rgba(107,114,232,.2);
+  border-radius:8px;padding:.65rem .25rem;
+}
+.sv{font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700;color:var(--gold);}
+.sl{font-size:.65rem;color:var(--muted);margin-top:.1rem;}
+
+.rsteps{display:flex;flex-direction:column;}
+.rstep{
+  display:flex;gap:.6rem;align-items:flex-start;
+  padding:.6rem 0;border-bottom:1px solid rgba(107,114,232,.1);
+}
+.rstep:last-child{border-bottom:none;}
+.rnum{
+  width:20px;height:20px;border-radius:50%;flex-shrink:0;
+  background:var(--indigo);display:flex;align-items:center;justify-content:center;
+  font-size:.65rem;font-weight:700;margin-top:2px;
+}
+.rname{font-size:.82rem;font-weight:500;line-height:1.4;}
+.rmeta{font-size:.7rem;color:var(--muted);margin-top:.1rem;}
+
+/* MAP */
+#map{flex:1;z-index:0;}
+.leaflet-container{background:var(--navy-mid) !important;}
+.leaflet-popup-content-wrapper{
+  background:var(--navy-mid) !important;border:1px solid var(--border) !important;
+  color:var(--white) !important;border-radius:9px !important;
+  box-shadow:0 8px 28px rgba(0,0,0,.55) !important;
+}
+.leaflet-popup-tip{background:var(--navy-mid) !important;}
+.leaflet-popup-content{font-family:'DM Sans',sans-serif;font-size:.81rem;line-height:1.5;}
+.leaflet-control-zoom a{background:var(--navy-mid) !important;color:var(--white) !important;border-color:var(--border) !important;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-icon">👵</div>
+  <div class="logo-text">I<span>Abuela</span></div>
+  <div class="hpill">Optimizador de Ruta</div>
+</header>
+
+<div class="layout">
+
+  <div class="sidebar">
+    <div class="sb">
+
+      <div class="st">API Key — OpenRouteService</div>
+      <div class="ss">Regístrate gratis en openrouteservice.org (2 000 peticiones/día gratuitas).</div>
+      <div class="api-row">
+        <input type="password" id="apiKey" placeholder="Pega aquí tu API Key…">
+        <a href="https://openrouteservice.org/dev/#/signup" target="_blank">Obtener →</a>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="st">Transporte</div>
+      <div class="ss" style="margin-bottom:.75rem">Elige cómo te desplazas entre supermercados.</div>
+      <div class="mode-row">
+        <button class="mbtn active" data-mode="driving-car"     onclick="setMode(this)">🚗 Coche</button>
+        <button class="mbtn"        data-mode="cycling-regular" onclick="setMode(this)">🚲 Bici</button>
+        <button class="mbtn"        data-mode="foot-walking"    onclick="setMode(this)">🚶 A pie</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="st">Paradas</div>
+      <div class="ss">Primera = origen, última = destino. Con 3 o más paradas intermedias el orden se optimiza automáticamente.</div>
+
+      <div class="stops-list" id="stopsList"></div>
+      <button class="add-btn" onclick="addStop()">＋ Añadir parada</button>
+
+      <div class="divider"></div>
+
+      <button class="opt-btn" id="optBtn" onclick="run()">
+        <span class="lbl">✦ Calcular Ruta Óptima</span>
+        <div class="spin"></div>
+      </button>
+
+      <div class="msg" id="msg"></div>
+
+      <div class="results" id="results">
+        <div class="divider"></div>
+        <div class="st" style="margin-bottom:.65rem">Ruta Optimizada</div>
+        <div class="stats-row" id="statsRow"></div>
+        <div class="rsteps" id="routeSteps"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="map"></div>
+</div>
+
+<script>
+// ── Constants ─────────────────────────────────────────────────────────
+const ORS = 'https://api.openrouteservice.org';
+
+// ── State ─────────────────────────────────────────────────────────────
+let mode  = 'driving-car';
+let stops = [];
+let sid   = 0;
+let map, routeL, markL;
+
+// ── Map ───────────────────────────────────────────────────────────────
+(function initMap() {
+  map    = L.map('map').setView([40.33, -3.87], 12);
+  routeL = L.layerGroup().addTo(map);
+  markL  = L.layerGroup().addTo(map);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap, © CARTO', subdomains: 'abcd', maxZoom: 19
+  }).addTo(map);
+})();
+
+function clearMap() { routeL.clearLayers(); markL.clearLayers(); }
+
+function mkIcon(label, color) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:32px;height:32px;border-radius:50%;background:${color};
+      display:flex;align-items:center;justify-content:center;
+      color:#fff;font-weight:700;font-size:.72rem;
+      border:2.5px solid rgba(255,255,255,.35);
+      box-shadow:0 4px 14px rgba(0,0,0,.6);
+      font-family:'DM Sans',sans-serif;">${label}</div>`,
+    iconSize:[32,32], iconAnchor:[16,16]
+  });
+}
+
+function drawMarkers(coords) {
+  const palette = ['#4ecb8d','#6b72e8','#e8c97a','#e85a6b','#a5abf5','#60bfff','#f0ede6'];
+  coords.forEach((c, i) => {
+    const first = i === 0, last = i === coords.length - 1;
+    const col   = first ? '#4ecb8d' : last ? '#e8c97a' : palette[(i % (palette.length - 2)) + 1];
+    const lbl   = first ? '🏠' : last ? '🏁' : String(i);
+    const type  = first ? 'Origen' : last ? 'Destino' : `Parada ${i}`;
+    L.marker([c.lat, c.lng], { icon: mkIcon(lbl, col) })
+     .bindPopup(`<b>${type}</b><br>${c.label}`)
+     .addTo(markL);
+  });
+}
+
+function drawGeometry(geom) {
+  const pts = geom.coordinates.map(([lng, lat]) => [lat, lng]);
+  L.polyline(pts, { color:'#6b72e8', weight:5, opacity:.9, lineJoin:'round' }).addTo(routeL);
+  L.polyline(pts, { color:'#a5abf5', weight:2.5, opacity:.55, dashArray:'7 9', lineJoin:'round' }).addTo(routeL);
+  map.fitBounds(L.polyline(pts).getBounds(), { padding:[45,45] });
+}
+
+// ── Stops UI ──────────────────────────────────────────────────────────
+function addStop(addr='') {
+  sid++;
+  stops.push({ id:`s${sid}`, address: addr });
+  renderStops();
+}
+
+function removeStop(id) {
+  stops = stops.filter(s => s.id !== id);
+  renderStops();
+}
+
+function updateStop(id, val) {
+  const s = stops.find(s => s.id === id);
+  if (s) s.address = val;
+}
+
+function renderStops() {
+  const list = document.getElementById('stopsList');
+  list.innerHTML = '';
+  stops.forEach((stop, i) => {
+    const first = i === 0, last = i === stops.length - 1 && stops.length > 1;
+    const bc    = first ? 'org' : last ? 'dst' : '';
+    const ico   = first ? '🏠' : last ? '🏁' : i;
+    const ph    = first ? 'Punto de partida…' : (last ? 'Destino final…' : 'Dirección del supermercado…');
+    const el    = document.createElement('div');
+    el.className = 'stop-item';
+    el.innerHTML = `
+      <div class="sbadge ${bc}">${ico}</div>
+      <input class="sinput" placeholder="${ph}" value="${esc(stop.address)}"
+        oninput="updateStop('${stop.id}',this.value)"
+        onkeydown="if(event.key==='Enter')addStop()">
+      ${stops.length > 2 ? `<button class="srem" onclick="removeStop('${stop.id}')">✕</button>` : ''}
+    `;
+    list.appendChild(el);
+  });
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+function setMode(btn) {
+  document.querySelectorAll('.mbtn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  mode = btn.dataset.mode;
+}
+
+// ── API ───────────────────────────────────────────────────────────────
+async function geocode(addr, key) {
+  const url = `${ORS}/geocode/search?api_key=${encodeURIComponent(key)}&text=${encodeURIComponent(addr)}&size=1&boundary.country=ES&lang=es`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Geocoder HTTP ${res.status}. Comprueba tu API key.`);
+  const d = await res.json();
+  if (!d.features?.length) throw new Error(`Dirección no encontrada: "${addr}"`);
+  const [lng, lat] = d.features[0].geometry.coordinates;
+  return { lat, lng, label: d.features[0].properties.label };
+}
+
+async function optimizeVRP(coords, key) {
+  // start = coords[0], end = coords[last], jobs = coords[1..n-2]
+  const jobs = coords.slice(1, coords.length - 1).map((c, i) => ({
+    id: i + 1,
+    location: [c.lng, c.lat]
+  }));
+  const body = {
+    jobs,
+    vehicles: [{
+      id: 1,
+      profile: mode,
+      start: [coords[0].lng, coords[0].lat],
+      end:   [coords[coords.length-1].lng, coords[coords.length-1].lat]
+    }]
+  };
+  const res = await fetch(`${ORS}/optimization`, {
+    method: 'POST',
+    headers: { Authorization: key, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Optimization ${res.status}: ${txt.slice(0,180)}`);
+  }
+  const d = await res.json();
+  // Rebuild ordered coords: start → optimized job sequence → end
+  const ordered = [coords[0]];
+  (d.routes[0].steps || []).forEach(step => {
+    if (step.type === 'job') ordered.push(coords[step.id]); // step.id is 1-based job id = index in coords
+  });
+  ordered.push(coords[coords.length - 1]);
+  return ordered;
+}
+
+async function directions(orderedCoords, key) {
+  const body = {
+    coordinates: orderedCoords.map(c => [c.lng, c.lat]),
+    geometry: true,
+    instructions: false
+  };
+  const res = await fetch(`${ORS}/v2/directions/${mode}/geojson`, {
+    method: 'POST',
+    headers: { Authorization: key, 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Directions ${res.status}: ${txt.slice(0,180)}`);
+  }
+  return res.json();
+}
+
+// ── Main Flow ─────────────────────────────────────────────────────────
+async function run() {
+  const key  = document.getElementById('apiKey').value.trim();
+  const addrs = stops.map(s => s.address.trim()).filter(Boolean);
+
+  if (!key)           return showMsg('Introduce tu API Key de OpenRouteService.', false);
+  if (addrs.length<2) return showMsg('Rellena al menos 2 direcciones.', false);
+
+  setLoading(true);
+  clearMap();
+  document.getElementById('results').classList.remove('show');
+
+  try {
+    showMsg('Geocodificando direcciones…', true);
+    const coords = await Promise.all(addrs.map(a => geocode(a, key)));
+
+    let ordered = coords;
+    if (coords.length > 2) {
+      showMsg('Optimizando orden de paradas…', true);
+      try { ordered = await optimizeVRP(coords, key); }
+      catch(e) { console.warn('VRP fallback:', e.message); }
+    }
+
+    showMsg('Calculando ruta…', true);
+    const geojson = await directions(ordered, key);
+    const feat    = geojson.features[0];
+
+    drawGeometry(feat.geometry);
+    drawMarkers(ordered);
+    showResults(ordered, feat.properties.summary);
+    hideMsg();
+
+  } catch(e) {
+    showMsg(e.message || 'Error desconocido.', false);
+  } finally {
+    setLoading(false);
+  }
+}
+
+// ── UI ────────────────────────────────────────────────────────────────
+function setLoading(on) {
+  const btn = document.getElementById('optBtn');
+  btn.classList.toggle('loading', on);
+  btn.disabled = on;
+}
+
+function showMsg(text, isInfo) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.className   = 'msg show' + (isInfo ? ' info' : '');
+}
+function hideMsg() { document.getElementById('msg').classList.remove('show'); }
+
+function showResults(ordered, summary) {
+  hideMsg();
+  const km   = (summary.distance / 1000).toFixed(1);
+  const mins = Math.round(summary.duration / 60);
+  const h    = Math.floor(mins/60), m = mins%60;
+  const tStr = h ? `${h}h ${m}m` : `${m} min`;
+
+  document.getElementById('statsRow').innerHTML = `
+    <div class="sc"><div class="sv">${km}</div><div class="sl">km totales</div></div>
+    <div class="sc"><div class="sv">${tStr}</div><div class="sl">tiempo est.</div></div>
+    <div class="sc"><div class="sv">${ordered.length}</div><div class="sl">paradas</div></div>
+  `;
+
+  const rs = document.getElementById('routeSteps');
+  rs.innerHTML = '';
+  ordered.forEach((c, i) => {
+    const first = i===0, last = i===ordered.length-1;
+    const ico   = first ? '🏠' : last ? '🏁' : i;
+    const type  = first ? 'Origen' : last ? 'Destino' : `Parada ${i}`;
+    const div   = document.createElement('div');
+    div.className = 'rstep';
+    div.innerHTML = `
+      <div class="rnum">${ico}</div>
+      <div>
+        <div class="rname">${type}</div>
+        <div class="rmeta">${c.label}</div>
+      </div>`;
+    rs.appendChild(div);
+  });
+
+  document.getElementById('results').classList.add('show');
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────
+addStop('Mercadona, Móstoles, Madrid');
+addStop('Carrefour, Móstoles, Madrid');
+addStop('Lidl, Leganés, Madrid');
+</script>
+</body>
+</html>
