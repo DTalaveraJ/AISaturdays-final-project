@@ -43,6 +43,7 @@ DB_PATH     = "iabuela_catalog.db"
 ORS_BASE    = "https://api.openrouteservice.org"
 APIKEY_PATH = "my_apikey.json"
 HTML_PATH   = "iabuela-route-optimizer.html"
+BROWSER     = "chrome"   # "chrome" | "firefox" | "edge" | "" = system default
 
 
 def _load_ors_key() -> str:
@@ -241,24 +242,91 @@ def _run_agent(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SHOPPING OPTIMIZER  (pure Python — no LLM)
+#  AGENT 1 — BASKET OPTIMIZER (Semantic Guardrails & Stop Minimization)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _query_products(keyword: str) -> list[dict]:
-    conn = _conn()
-    rows = conn.execute(
-        """SELECT p.product_id, p.name, p.sku, p.price,
-                  s.shop_id, s.name AS shop_name, s.chain, s.address
-           FROM products p
-           JOIN shops s ON p.shop_id = s.shop_id
-           WHERE LOWER(p.name) LIKE ?
-           ORDER BY p.price ASC
-           LIMIT 10""",
-        (f"%{keyword.lower()}%",),
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+_BASKET_SYSTEM = """\
+You are a Shopping Expert. Your goal is to take a raw list of products and find the
+best combination of supermarkets to fulfill the basket, prioritizing the minimum
+number of stops.
 
+### SEMANTIC GUARDRAILS (CRITICAL):
+When matching a user's input product with a supermarket's inventory, you MUST:
+1. IDENTIFY CORE NOUNS: If the user says 'aceite', they refer to a cooking oil (Olive, Sunflower).
+   Do NOT match it with 'atún en aceite' (Canned Food) or 'aceite corporal' (Body Care).
+2. CATEGORY ENFORCEMENT: Match only if it belongs to the logical category.
+   - 'Aceite' -> Cooking Oils. 'Leche' -> Dairy.
+3. EXCLUSION: If a product is a compound dish or unrelated, it is a FAIL match.
+
+### OPTIMIZATION STEPS:
+1. Call 'search_products_in_inventory' for the items.
+2. Apply the GUARDRAILS to filter out incorrect matches.
+3. Call 'finalize_basket' with the best products found, consolidating items in the
+   FEWEST number of shops possible.
+"""
+
+_BASKET_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_products_in_inventory",
+            "description": "Searches the database for product candidates.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "queries": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["queries"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "finalize_basket",
+            "description": "Submit the final selection of products and shops.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "shop_id": {"type": "integer"},
+                                "shop_name": {"type": "string"},
+                                "product_name": {"type": "string"},
+                                "unit_price": {"type": "number"},
+                                "quantity": {"type": "integer"}
+                            }
+                        }
+                    },
+                    "total_cost": {"type": "number"}
+                },
+                "required": ["items", "total_cost"]
+            }
+        }
+    }
+]
+
+def _search_inventory(queries: list[str]) -> list[dict]:
+    """Busca en la DB todos los candidatos para las queries dadas."""
+    all_results = []
+    conn = _conn()
+    for q in queries:
+        rows = conn.execute(
+            """SELECT p.product_id, p.name, p.price, s.shop_id, s.name AS shop_name, s.address
+               FROM products p JOIN shops s ON p.shop_id = s.shop_id
+               WHERE p.name LIKE ? LIMIT 15""",
+            (f"%{q}%",)
+        ).fetchall()
+        all_results.append({"query": q, "matches": [dict(r) for r in rows]})
+    conn.close()
+    return all_results
+
+_BASKET_FNS = {
+    "search_products_in_inventory": lambda queries: _search_inventory(queries),
+}
 
 def run_shopping_agent(
     budget: float,
@@ -266,70 +334,22 @@ def run_shopping_agent(
     n_people: int,
     max_shops: int,
 ) -> tuple[str, dict | None]:
-    """
-    Greedy Python optimizer — no LLM calls, runs in milliseconds.
+    """Agente LLM que aplica guardrails y optimiza la cesta."""
+    user_msg = (
+        f"Build a basket for {n_people} people with a max of {max_shops} shops.\n"
+        f"Budget: {budget}€\n"
+        f"Items needed: {', '.join(categories)}\n"
+        "Apply semantic guardrails: for 'aceite', avoid 'atun en aceite'."
+    )
 
-    For each category picks the cheapest product, consolidating into the fewest
-    shops (up to max_shops). Budget is a soft target: all categories are always
-    included even if the total exceeds it.
-    """
-    # Fetch cheapest candidates for every category in one DB round-trip each
-    candidates: dict[str, list[dict]] = {}
-    for cat in categories:
-        rows = _query_products(cat)
-        if rows:
-            candidates[cat] = rows
-        else:
-            print(f"  ⚠ No products found for category '{cat}' — skipped.")
-
-    selected_shops: set[int] = set()
-    items: list[dict] = []
-
-    # Sort categories so rarest (fewest candidates) are picked first,
-    # giving the greedy pass more flexibility for common ones.
-    ordered_cats = sorted(candidates, key=lambda c: len(candidates[c]))
-
-    for cat in ordered_cats:
-        rows = candidates[cat]
-
-        # Prefer a shop already in the basket; open a new slot only if there is room
-        match = next((r for r in rows if r["shop_id"] in selected_shops), None)
-        if match is None:
-            if len(selected_shops) < max_shops:
-                match = rows[0]          # cheapest overall, opens a new shop
-            else:
-                # All shop slots used — pick cheapest that fits an existing shop
-                # (may not exist → fall back to cheapest, exceeding max_shops)
-                match = next((r for r in rows if r["shop_id"] in selected_shops), rows[0])
-
-        selected_shops.add(match["shop_id"])
-
-        # Scale quantity: 1 per person for cheap perishables, 1 total otherwise
-        qty = n_people if match["price"] < 3.0 else 1
-        items.append({
-            "shop_id":      match["shop_id"],
-            "shop_name":    match["shop_name"],
-            "product_name": match["name"],
-            "unit_price":   match["price"],
-            "quantity":     qty,
-            "line_total":   round(match["price"] * qty, 2),
-        })
-
-    if not items:
-        return "", None
-
-    total = round(sum(i["line_total"] for i in items), 2)
-    over  = total > budget
-    basket = {
-        "items":      items,
-        "total_cost": total,
-        "shops_used": list(selected_shops),
-    }
-
-    summary = (f"Basket: {len(items)} products across {len(selected_shops)} shop(s), "
-               f"total {total:.2f}€"
-               + (f" (⚠ {total - budget:.2f}€ over budget)" if over else " (within budget)"))
-    return summary, basket
+    text, basket = _run_agent(
+        system=_BASKET_SYSTEM,
+        user_msg=user_msg,
+        tools=_BASKET_TOOLS,
+        tool_fns=_BASKET_FNS,
+        terminal_tool="finalize_basket"
+    )
+    return text, basket
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -608,6 +628,37 @@ def run_route_agent(
 
 # ── HTML launcher ─────────────────────────────────────────────────────────────
 
+_WIN_EXE = {
+    "chrome":  [r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"],
+    "firefox": [r"C:\Program Files\Mozilla Firefox\firefox.exe",
+                r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe"],
+    "edge":    [r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"],
+}
+
+_NEW_WINDOW_FLAG = {"chrome": "--new-window", "firefox": "-new-window", "edge": "--new-window"}
+
+
+def _open_url(url: str) -> None:
+    import subprocess
+    import webbrowser
+    if not BROWSER:
+        webbrowser.open_new_tab(url)
+        return
+    candidates = _WIN_EXE.get(BROWSER.lower(), [BROWSER])
+    exe = next((p for p in candidates if os.path.isfile(p)), None)
+    if exe:
+        flag = _NEW_WINDOW_FLAG.get(BROWSER.lower())
+        cmd  = [exe, flag, url] if flag else [exe, url]
+        subprocess.Popen(cmd)
+    else:
+        try:
+            webbrowser.get(BROWSER).open_new_tab(url)
+        except webbrowser.Error:
+            webbrowser.open_new_tab(url)
+
+
 def _launch_html(
     home_address: str,
     shops: list[dict],
@@ -615,32 +666,20 @@ def _launch_html(
     api_key: str = "",
     html_path: str = HTML_PATH,
 ) -> None:
-    """
-    Open iabuela-route-optimizer.html in the default browser with the route
-    stops pre-filled via URL query parameters.
-
-    Stops order: home → shop addresses → home (circular).
-    The HTML reads ?stop=...&stop=...&mode=...&apikey=... on load.
-    The API key is always sourced from my_apikey.json (falls back to the
-    api_key argument if the file is missing).
-    """
-    import webbrowser
+    import time
 
     key = _load_ors_key() or api_key
 
-    stops = (
-        [home_address]
-        + [s["address"] for s in shops]
-        + [home_address]
-    )
-    params = urllib.parse.urlencode(
-        [("stop", s) for s in stops] + [("mode", transport_mode), ("apikey", key)],
-        quote_via=urllib.parse.quote,
-    )
+    # Write session data to a JS file so Chrome always reads fresh data from disk
+    stops_list  = [home_address] + [s["address"] for s in shops] + [home_address]
+    session_js  = os.path.join(os.path.dirname(os.path.abspath(html_path)), "route_session.js")
+    with open(session_js, "w", encoding="utf-8") as f:
+        f.write(f"window.ROUTE_SESSION={json.dumps({'stops': stops_list, 'mode': transport_mode, 'apikey': key}, ensure_ascii=False)};")
+
     abs_path = os.path.abspath(html_path)
-    url = f"file:///{abs_path.replace(os.sep, '/')}?{params}"
+    url = f"file:///{abs_path.replace(os.sep, '/')}?_t={int(time.time())}"
     print(f"\n  Opening route optimizer in browser...")
-    webbrowser.open(url)
+    _open_url(url)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
