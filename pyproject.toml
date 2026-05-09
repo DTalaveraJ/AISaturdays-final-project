@@ -1,0 +1,19 @@
+[project]
+name = "aisaturdays-final-project"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Daniel Talavera",email = "100378629@alumnos.uc3m.es"}
+]
+readme = "README.md"
+requires-python = ">=3.11,<4.0.0"
+dependencies = [
+    "langchain-ollama (>=1.1.0,<2.0.0)",
+    "langchain-core (>=1.3.3,<2.0.0)",
+    "langgraph (>=1.1.10,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
