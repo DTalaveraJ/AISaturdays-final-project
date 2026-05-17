@@ -18,9 +18,10 @@ interface Props {
     stores_used: string[];
   };
   onRouteReady: (route: any) => void;
+  transportMode: string;
 }
 
-export function BasketResult({ basket, onRouteReady }: Props) {
+export function BasketResult({ basket, onRouteReady, transportMode }: Props) {
   const [loading, setLoading] = useState(false);
 
   // Group items by store
@@ -45,7 +46,7 @@ export function BasketResult({ basket, onRouteReady }: Props) {
           home_lat: pos.coords.latitude,
           home_lng: pos.coords.longitude,
           store_ids: basket.stores_used,
-          transport_mode: "driving",
+          transport_mode: transportMode,
         }),
       });
       const data = await res.json();

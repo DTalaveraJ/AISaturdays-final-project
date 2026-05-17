@@ -10,6 +10,7 @@ export default function Home() {
   const [categories, setCategories] = useState<string[]>([]);
   const [basket, setBasket] = useState<any>(null);
   const [route, setRoute] = useState<any>(null);
+  const [transportMode, setTransportMode] = useState<string>("driving");
 
   return (
     <main className="max-w-7xl mx-auto px-4 py-8">
@@ -38,12 +39,23 @@ export default function Home() {
             onOptimize={setBasket}
           />
 
-          {basket && <BasketResult basket={basket} onRouteReady={setRoute} />}
+          {basket && (
+            <BasketResult
+              basket={basket}
+              onRouteReady={setRoute}
+              transportMode={transportMode}
+            />
+          )}
         </div>
 
         {/* Right column: map */}
-        <div className="lg:sticky lg:top-8 h-[600px]">
-          <MapView route={route} basket={basket} />
+        <div className="lg:sticky lg:top-8 h-[800px] w-[800px]">
+          <MapView
+            route={route}
+            basket={basket}
+            transportMode={transportMode}
+            onTransportModeChange={setTransportMode}
+          />
         </div>
       </div>
     </main>

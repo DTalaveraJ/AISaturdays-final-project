@@ -19,11 +19,18 @@ export function RecipeParser({ onIngredientsFound }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error("Recipe parse error:", res.status, errText);
+        alert(`Error al analizar la receta: ${errText}`);
+        return;
+      }
       const data = await res.json();
       onIngredientsFound(data.ingredients || []);
       setText("");
     } catch (err) {
       console.error("Recipe parse failed:", err);
+      alert("Error de conexión al analizar la receta");
     } finally {
       setLoading(false);
     }

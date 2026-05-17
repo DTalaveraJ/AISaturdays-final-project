@@ -3,6 +3,8 @@ Gemini implementation of the LLM provider.
 """
 
 import json
+import asyncio
+from functools import partial
 
 from google import genai
 
@@ -17,10 +19,18 @@ class GeminiProvider(LLMProvider):
 
     async def parse_recipe(self, recipe_text: str) -> list[dict]:
         prompt = RECIPE_PROMPT.format(recipe_text=recipe_text)
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=prompt,
+
+        # Run synchronous SDK call in a thread to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            partial(
+                self.client.models.generate_content,
+                model=self.model,
+                contents=prompt,
+            ),
         )
+
         text = response.text.strip()
         # Strip markdown code fences if present
         if text.startswith("```"):
