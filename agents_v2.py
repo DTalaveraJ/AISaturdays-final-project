@@ -7,7 +7,7 @@ Built with LangChain + LangGraph for proper agentic tool-use loops.
 
 Agent 1 – Shopping Optimizer  (deterministic Python, no LLM)
   Given a budget, item categories, number of people, and max shops,
-  queries iabuela_catalog.db and builds the cheapest basket.
+  queries the Supabase PostgreSQL database and builds the cheapest basket.
 
 Agent 2 – Route Optimizer  (LLM-driven, LangGraph tool-use loop)
   Geocodes home, runs ORS VRP + directions, drops shops until the
@@ -17,19 +17,24 @@ Orchestrator
   LangGraph StateGraph that pipes both agents in sequence.
 
 Requirements:
-  pip install langchain-ollama langgraph langchain-core
+  pip install langchain-ollama langgraph langchain-core psycopg2-binary
   ollama pull qwen2.5-coder:7b-instruct-q4_K_M
 """
 
 import json
 import operator
 import os
-import sqlite3
 import ssl
 import urllib.parse
 import urllib.request
 import webbrowser
 from typing import Annotated, List, TypedDict
+
+from dotenv import load_dotenv
+load_dotenv()
+
+import psycopg2
+import psycopg2.extras
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
@@ -38,12 +43,16 @@ from langgraph.graph import END, StateGraph
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-MODEL       = "qwen2.5-coder:7b-instruct-q4_K_M"
-DB_PATH     = "iabuela_catalog.db"
+MODEL       = "qwen2.5-coder:7b-instruct"
 ORS_BASE    = "https://api.openrouteservice.org"
 APIKEY_PATH = "my_apikey.json"
 HTML_PATH   = "iabuela-route-optimizer.html"
 BROWSER     = "chrome"   # "chrome" | "firefox" | "edge" | "" = system default
+
+# Supabase PostgreSQL connection string.
+# Format: postgresql://postgres:<password>@<host>:<port>/<dbname>
+# Set via DATABASE_URL env var or edit directly here.
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 
 def _load_ors_key() -> str:
@@ -70,28 +79,59 @@ def _http(url: str, method: str = "GET", body: dict = None, headers: dict = None
         return json.loads(resp.read().decode())
 
 
-# ── DB ─────────────────────────────────────────────────────────────────────────
+# ── DB (Supabase PostgreSQL) ────────────────────────────────────────────────────
 
-def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(DB_PATH)
-    c.row_factory = sqlite3.Row
-    return c
+def _get_db_url() -> str:
+    """Return a psycopg2-compatible connection string from DATABASE_URL."""
+    url = DATABASE_URL
+    # Convert asyncpg format to psycopg2 format if needed
+    if url.startswith("postgresql+asyncpg://"):
+        url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    return url
+
+
+def _conn():
+    """Open a new psycopg2 connection with RealDictCursor."""
+    return psycopg2.connect(_get_db_url(), cursor_factory=psycopg2.extras.RealDictCursor)
 
 
 def _query_products(keyword: str) -> list[dict]:
+    """
+    Search products by keyword (matching product name OR category slug/name),
+    joining with the latest price snapshot and store info.
+    Returns up to 10 results sorted by price ascending.
+    """
     conn = _conn()
-    rows = conn.execute(
-        """SELECT p.product_id, p.name, p.sku, p.price,
-                  s.shop_id, s.name AS shop_name, s.chain, s.address
-           FROM products p
-           JOIN shops s ON p.shop_id = s.shop_id
-           WHERE LOWER(p.name) LIKE ?
-           ORDER BY p.price ASC
-           LIMIT 10""",
-        (f"%{keyword.lower()}%",),
-    ).fetchall()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT DISTINCT ON (p.id)
+               p.id AS product_id,
+               p.name,
+               p.barcode AS sku,
+               ps.price,
+               s.id AS store_id,
+               s.name AS store_name,
+               s.chain,
+               s.address
+        FROM products p
+        JOIN price_snapshots ps ON ps.product_id = p.id
+        JOIN stores s ON p.store_id = s.id
+        LEFT JOIN categories c ON p.category_id = c.id
+        WHERE LOWER(p.name) LIKE %s
+           OR LOWER(c.slug) LIKE %s
+           OR LOWER(c.name) LIKE %s
+        ORDER BY p.id, ps.scraped_at DESC
+        """,
+        (f"%{keyword.lower()}%", f"%{keyword.lower()}%", f"%{keyword.lower()}%"),
+    )
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
-    return [dict(r) for r in rows]
+
+    # Sort by price and limit to 10
+    rows.sort(key=lambda r: float(r["price"]))
+    return [dict(r) for r in rows[:10]]
 
 
 # ── LangChain Tools ────────────────────────────────────────────────────────────
@@ -257,7 +297,7 @@ def shopping_node(state: AgentState) -> dict:
         else:
             print(f"  ⚠ No products found for category '{cat}' — skipped.")
 
-    selected_shops: set[int] = set()
+    selected_shops: set = set()
     items: list[dict] = []
 
     # Sort rarest categories first so the greedy pass has more flexibility.
@@ -265,21 +305,21 @@ def shopping_node(state: AgentState) -> dict:
 
     for cat in ordered_cats:
         rows = candidates[cat]
-        match = next((r for r in rows if r["shop_id"] in selected_shops), None)
+        match = next((r for r in rows if r["store_id"] in selected_shops), None)
         if match is None:
             if len(selected_shops) < max_shops:
                 match = rows[0]
             else:
-                match = next((r for r in rows if r["shop_id"] in selected_shops), rows[0])
-        selected_shops.add(match["shop_id"])
-        qty = n_people if match["price"] < 3.0 else 1
+                match = next((r for r in rows if r["store_id"] in selected_shops), rows[0])
+        selected_shops.add(match["store_id"])
+        qty = n_people if float(match["price"]) < 3.0 else 1
         items.append({
-            "shop_id":      match["shop_id"],
-            "shop_name":    match["shop_name"],
+            "store_id":     match["store_id"],
+            "store_name":   match["store_name"],
             "product_name": match["name"],
-            "unit_price":   match["price"],
+            "unit_price":   float(match["price"]),
             "quantity":     qty,
-            "line_total":   round(match["price"] * qty, 2),
+            "line_total":   round(float(match["price"]) * qty, 2),
         })
 
     total = round(sum(i["line_total"] for i in items), 2) if items else 0.0
@@ -287,7 +327,7 @@ def shopping_node(state: AgentState) -> dict:
 
     by_shop: dict[str, list] = {}
     for item in items:
-        by_shop.setdefault(item["shop_name"], []).append(item)
+        by_shop.setdefault(item["store_name"], []).append(item)
 
     for shop_name, shop_items in by_shop.items():
         print(f"  📍 {shop_name}")
@@ -302,7 +342,7 @@ def shopping_node(state: AgentState) -> dict:
         "basket": {
             "items":      items,
             "total_cost": total,
-            "shops_used": list(selected_shops),
+            "stores_used": list(selected_shops),
         }
     }
 
@@ -340,36 +380,42 @@ def prepare_route_node(state: AgentState) -> dict:
 
     if not ors_key:
         print("\n  ⚠ ORS_API_KEY not set — skipping route optimization.")
-        print("    Set it with:  set ORS_API_KEY=<your_key>  (Windows)")
+        print("    Set it with:  export ORS_API_KEY=<your_key>")
         return {"shops_for_route": [], "route_messages": []}
 
-    used_ids = basket.get("shops_used", [])
+    used_ids = basket.get("stores_used", [])
     if not used_ids:
         return {"shops_for_route": [], "route_messages": []}
 
-    shop_cost: dict[int, float] = {}
+    store_cost: dict[str, float] = {}
     for it in basket["items"]:
-        sid = it.get("shop_id")
+        sid = it.get("store_id")
         if sid is not None:
-            shop_cost[sid] = round(shop_cost.get(sid, 0.0) + it["line_total"], 2)
+            key = str(sid)
+            store_cost[key] = round(store_cost.get(key, 0.0) + it["line_total"], 2)
 
     conn = _conn()
-    rows = conn.execute(
-        f"SELECT shop_id, name, address, latitude AS lat, longitude AS lng "
-        f"FROM shops WHERE shop_id IN ({','.join('?' * len(used_ids))})",
-        used_ids,
-    ).fetchall()
+    cur = conn.cursor()
+    cur.execute(
+        """SELECT id AS store_id, name, address, latitude AS lat, longitude AS lng
+           FROM stores
+           WHERE id = ANY(%s::uuid[])""",
+        ([str(uid) for uid in used_ids],),
+    )
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
 
     shops_for_route = [
         {
-            "name":        r["name"],
-            "address":     r["address"],
-            "lat":         r["lat"],
-            "lng":         r["lng"],
-            "basket_cost": shop_cost.get(r["shop_id"], 0.0),
+            "name":        r["name"] or str(r["store_id"]),
+            "address":     r["address"] or "",
+            "lat":         float(r["lat"]) if r["lat"] else None,
+            "lng":         float(r["lng"]) if r["lng"] else None,
+            "basket_cost": store_cost.get(str(r["store_id"]), 0.0),
         }
         for r in rows
+        if r["lat"] is not None and r["lng"] is not None
     ]
 
     print("\n\n[Agent 2] Route Optimizer — computing optimal route...\n")

@@ -1,0 +1,1 @@
+window.ROUTE_SESSION={"stops": ["Universidad Carlos III de Madrid, Leganés", "C. del Conde de Peñalver, 15, Salamanca, 28006 Madrid, Spain", "Universidad Carlos III de Madrid, Leganés"], "mode": "driving-car", "apikey": "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImVhNTRmNDZhNzIzYzRmYTk4MmRlNDVjOWViN2YwNDc2IiwiaCI6Im11cm11cjY0In0="};
