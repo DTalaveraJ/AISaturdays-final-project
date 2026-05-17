@@ -19,3 +19,7 @@ node_modules/
 # IDE
 .vscode/
 .idea/
+
+.next/
+
+settings.json

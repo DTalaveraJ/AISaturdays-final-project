@@ -1,0 +1,137 @@
+"use client";
+
+import { useState } from "react";
+
+interface Props {
+  categories: string[];
+  setCategories: (cats: string[]) => void;
+  onOptimize: (basket: any) => void;
+}
+
+export function GroceryList({ categories, setCategories, onOptimize }: Props) {
+  const [input, setInput] = useState("");
+  const [budget, setBudget] = useState(35);
+  const [nPeople, setNPeople] = useState(2);
+  const [maxShops, setMaxShops] = useState(3);
+  const [loading, setLoading] = useState(false);
+
+  const addItem = () => {
+    if (input.trim()) {
+      setCategories([...categories, input.trim().toLowerCase()]);
+      setInput("");
+    }
+  };
+
+  const removeItem = (idx: number) => {
+    setCategories(categories.filter((_, i) => i !== idx));
+  };
+
+  const handleOptimize = async () => {
+    if (categories.length === 0) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/basket/optimize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          categories,
+          budget,
+          n_people: nPeople,
+          max_shops: maxShops,
+        }),
+      });
+      const data = await res.json();
+      onOptimize(data);
+    } catch (err) {
+      console.error("Basket optimization failed:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-lg shadow p-4">
+      <h2 className="font-semibold text-lg mb-2">🛒 Lista de la compra</h2>
+
+      {/* Add item */}
+      <div className="flex gap-2 mb-3">
+        <input
+          type="text"
+          className="flex-1 border rounded-md px-3 py-1.5 text-sm"
+          placeholder="Añadir producto (ej: leche, pan, pollo...)"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && addItem()}
+        />
+        <button
+          onClick={addItem}
+          className="px-3 py-1.5 bg-green-500 text-white rounded-md text-sm hover:bg-green-600"
+        >
+          +
+        </button>
+      </div>
+
+      {/* Item list */}
+      {categories.length > 0 && (
+        <ul className="space-y-1 mb-4">
+          {categories.map((cat, idx) => (
+            <li
+              key={idx}
+              className="flex justify-between items-center text-sm bg-gray-50 px-3 py-1.5 rounded"
+            >
+              <span>{cat}</span>
+              <button
+                onClick={() => removeItem(idx)}
+                className="text-red-400 hover:text-red-600"
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* Settings */}
+      <div className="grid grid-cols-3 gap-3 mb-4 text-sm">
+        <label className="flex flex-col">
+          <span className="text-gray-500">Presupuesto €</span>
+          <input
+            type="number"
+            value={budget}
+            onChange={(e) => setBudget(+e.target.value)}
+            className="border rounded px-2 py-1 mt-1"
+          />
+        </label>
+        <label className="flex flex-col">
+          <span className="text-gray-500">Personas</span>
+          <input
+            type="number"
+            value={nPeople}
+            onChange={(e) => setNPeople(+e.target.value)}
+            className="border rounded px-2 py-1 mt-1"
+            min={1}
+          />
+        </label>
+        <label className="flex flex-col">
+          <span className="text-gray-500">Máx. tiendas</span>
+          <input
+            type="number"
+            value={maxShops}
+            onChange={(e) => setMaxShops(+e.target.value)}
+            className="border rounded px-2 py-1 mt-1"
+            min={1}
+          />
+        </label>
+      </div>
+
+      <button
+        onClick={handleOptimize}
+        disabled={loading || categories.length === 0}
+        className="w-full py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700
+                   disabled:opacity-50 font-medium"
+      >
+        {loading ? "Optimizando..." : "🔍 Optimizar cesta"}
+      </button>
+    </div>
+  );
+}
