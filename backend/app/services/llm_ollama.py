@@ -67,7 +67,7 @@ class OllamaProvider(LLMProvider):
         return parsed
 
     async def parse_raw(self, prompt: str) -> dict:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=180.0) as client:
             try:
                 resp = await client.post(
                     f"{self.base_url}/api/generate",

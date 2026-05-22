@@ -74,7 +74,7 @@ class ProductMatcher:
                 "price": float(c["price"]),
                 "store_name": c.get("store_name", ""),
             }
-            for c in candidates[:30]  # Cap at 30 to keep prompt manageable
+            for c in candidates[:10]  # Keep small for local models
         ]
 
         prompt = MATCH_PROMPT.format(
@@ -82,10 +82,34 @@ class ProductMatcher:
             products_json=json.dumps(products_for_llm, ensure_ascii=False, indent=2),
         )
 
+        print(f"\n[SmartMatch] 🔍 Query: \"{query}\"")
+        print(f"[SmartMatch]    Candidates from DB: {len(products_for_llm)} products")
+        for p in products_for_llm[:5]:
+            print(f"[SmartMatch]      - {p['name']} ({p['price']:.2f}€ @ {p['store_name']})")
+        if len(products_for_llm) > 5:
+            print(f"[SmartMatch]      ... and {len(products_for_llm) - 5} more")
+
         try:
             response = await self.llm.parse_raw(prompt)
+
+            # Log the LLM decision
+            matches = response.get("matches", [])
+            no_match = response.get("no_exact_match", False)
+            suggestion = response.get("suggestion")
+
+            if no_match:
+                print(f"[SmartMatch] ❌ No exact match for \"{query}\"")
+                if suggestion:
+                    print(f"[SmartMatch] 💡 Suggestion: {suggestion.get('name', '?')}")
+                    print(f"[SmartMatch]    Reason: {suggestion.get('reason', '?')}")
+            else:
+                print(f"[SmartMatch] ✅ LLM selected {len(matches)} products for \"{query}\":")
+                for m in matches:
+                    print(f"[SmartMatch]    → {m.get('name', '?')} (relevance: {m.get('relevance', '?')})")
+
             return response
-        except Exception:
+        except Exception as e:
+            print(f"[SmartMatch] ⚠ LLM call failed for \"{query}\": {e}")
             # Fallback: return all candidates as-is if LLM fails
             return {
                 "matches": [

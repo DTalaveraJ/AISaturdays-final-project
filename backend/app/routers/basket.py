@@ -98,6 +98,18 @@ async def optimize_basket(req: BasketRequest):
     When smart_match=True, uses LLM to filter irrelevant results and suggest substitutions.
     When smart_match=False, uses simple keyword matching (faster, no LLM cost).
     """
+    try:
+        return await _do_optimize(req)
+    except Exception as e:
+        print(f"[Basket] 💥 Unhandled error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Basket optimization failed: {str(e)}")
+
+
+async def _do_optimize(req: BasketRequest) -> BasketResponse:
+    import asyncio
+
     matcher = None
     if req.smart_match:
         print(f"\n[Basket] 🧠 Smart match ENABLED — using LLM to filter products")
@@ -111,54 +123,92 @@ async def optimize_basket(req: BasketRequest):
     else:
         print(f"\n[Basket] ⚡ Smart match DISABLED — using keyword matching only (no AI)")
 
+    # Step 1: Query DB for all categories (fast, no LLM)
+    raw_by_cat: dict[str, list[dict]] = {}
+    for cat in req.categories:
+        raw_results = _query_products_for_category(cat, req.store_ids)
+        raw_by_cat[cat] = raw_results
+
+    # Step 2: LLM matching (if enabled)
     candidates: dict[str, list[dict]] = {}
     suggestions: list[Suggestion] = []
 
-    for cat in req.categories:
-        raw_results = _query_products_for_category(cat, req.store_ids)
-
-        if not raw_results:
-            # Nothing found at all for this keyword
-            suggestions.append(Suggestion(
-                category=cat,
-                product_id="",
-                product_name="",
-                reason=f"No se encontraron productos para '{cat}' en las tiendas disponibles",
-            ))
-            continue
-
-        if matcher:
-            # Use LLM to rank and filter
+    if matcher:
+        # Process all categories through LLM — run concurrently for speed
+        async def match_one(cat: str, raw_results: list[dict]):
+            if not raw_results:
+                return cat, None, Suggestion(
+                    category=cat, product_id="", product_name="",
+                    reason=f"No se encontraron productos para '{cat}' en las tiendas disponibles",
+                )
             try:
-                match_result = await matcher.match_products(cat, raw_results)
+                match_result = await asyncio.wait_for(
+                    matcher.match_products(cat, raw_results),
+                    timeout=60.0,  # 60s max per category
+                )
+                return cat, match_result, None
+            except asyncio.TimeoutError:
+                print(f"[Basket] ⏱️ Timeout for '{cat}' — falling back to keyword match")
+                return cat, None, None
+            except Exception as e:
+                print(f"[Basket] ⚠ Smart match failed for '{cat}': {e}")
+                return cat, None, None
 
-                if match_result.get("no_exact_match"):
-                    # LLM says none of the results are what the user wants
-                    suggestion = match_result.get("suggestion")
-                    if suggestion:
-                        suggestions.append(Suggestion(
-                            category=cat,
-                            product_id=suggestion.get("product_id", ""),
-                            product_name=suggestion.get("name", ""),
-                            reason=suggestion.get("reason", "Producto alternativo sugerido"),
-                        ))
-                        # Still include the suggestion as a candidate so the optimizer can use it
-                        matched_ids = {suggestion["product_id"]}
-                        filtered = [r for r in raw_results if str(r["product_id"]) in matched_ids]
-                        if filtered:
-                            candidates[cat] = filtered
-                    continue
-
-                # Filter raw_results to only LLM-approved products
-                matched_ids = {m["product_id"] for m in match_result.get("matches", [])}
-                filtered = [r for r in raw_results if str(r["product_id"]) in matched_ids]
-                candidates[cat] = filtered if filtered else raw_results[:10]
-
-            except Exception:
-                # LLM failed, fall back to raw results
-                candidates[cat] = raw_results[:10]
+        # Ollama is single-threaded — run sequentially to avoid queue starvation
+        # Gemini handles concurrency fine — run in parallel
+        from app.config import settings
+        if settings.llm_provider == "ollama":
+            print(f"[Basket] 🐌 Ollama detected — processing {len(req.categories)} categories sequentially")
+            results = []
+            for cat in req.categories:
+                result = await match_one(cat, raw_by_cat[cat])
+                results.append(result)
         else:
-            candidates[cat] = raw_results[:10]
+            print(f"[Basket] ⚡ Cloud LLM — processing {len(req.categories)} categories in parallel")
+            tasks = [match_one(cat, raw_by_cat[cat]) for cat in req.categories]
+            results = await asyncio.gather(*tasks)
+
+        for cat, match_result, suggestion in results:
+            raw_results = raw_by_cat[cat]
+
+            if suggestion:
+                suggestions.append(suggestion)
+                continue
+
+            if match_result is None:
+                # LLM failed, fall back to raw results
+                if raw_results:
+                    candidates[cat] = raw_results[:10]
+                continue
+
+            if match_result.get("no_exact_match"):
+                sug = match_result.get("suggestion")
+                if sug:
+                    suggestions.append(Suggestion(
+                        category=cat,
+                        product_id=sug.get("product_id", ""),
+                        product_name=sug.get("name", ""),
+                        reason=sug.get("reason", "Producto alternativo sugerido"),
+                    ))
+                    matched_ids = {sug["product_id"]}
+                    filtered = [r for r in raw_results if str(r["product_id"]) in matched_ids]
+                    if filtered:
+                        candidates[cat] = filtered
+                continue
+
+            matched_ids = {m["product_id"] for m in match_result.get("matches", [])}
+            filtered = [r for r in raw_results if str(r["product_id"]) in matched_ids]
+            candidates[cat] = filtered if filtered else raw_results[:10]
+    else:
+        for cat in req.categories:
+            raw_results = raw_by_cat[cat]
+            if not raw_results:
+                suggestions.append(Suggestion(
+                    category=cat, product_id="", product_name="",
+                    reason=f"No se encontraron productos para '{cat}' en las tiendas disponibles",
+                ))
+            else:
+                candidates[cat] = raw_results[:10]
 
     # Greedy optimizer: cheapest product per category, fewest stores
     selected_shops: set = set()
