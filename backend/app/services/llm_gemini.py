@@ -37,3 +37,20 @@ class GeminiProvider(LLMProvider):
             text = text.split("\n", 1)[1]
             text = text.rsplit("```", 1)[0]
         return json.loads(text)
+
+    async def parse_raw(self, prompt: str) -> dict:
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            partial(
+                self.client.models.generate_content,
+                model=self.model,
+                contents=prompt,
+            ),
+        )
+
+        text = response.text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1]
+            text = text.rsplit("```", 1)[0]
+        return json.loads(text)

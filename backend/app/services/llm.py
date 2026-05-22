@@ -18,6 +18,14 @@ class LLMProvider(ABC):
         """
         ...
 
+    @abstractmethod
+    async def parse_raw(self, prompt: str) -> dict:
+        """
+        Send a raw prompt expecting a JSON object response.
+        Used for product matching, substitutions, etc.
+        """
+        ...
+
 
 RECIPE_PROMPT = """Extract all ingredients from the following recipe text.
 Return a JSON array where each element has:

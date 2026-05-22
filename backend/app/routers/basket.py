@@ -1,11 +1,13 @@
 """
-Basket optimization endpoint — reuses Agent 1 logic.
+Basket optimization endpoint — with optional LLM-powered product matching.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.db import get_db
+from app.services.factory import get_llm_provider
+from app.services.product_matcher import ProductMatcher
 
 router = APIRouter()
 
@@ -16,6 +18,7 @@ class BasketRequest(BaseModel):
     n_people: int = 1
     max_shops: int = 3
     store_ids: list[str] | None = None  # optional filter to specific stores
+    smart_match: bool = False  # set True to use LLM filtering (slower but more accurate)
 
 
 class BasketItem(BaseModel):
@@ -27,14 +30,22 @@ class BasketItem(BaseModel):
     line_total: float
 
 
+class Suggestion(BaseModel):
+    category: str
+    product_id: str
+    product_name: str
+    reason: str
+
+
 class BasketResponse(BaseModel):
     items: list[BasketItem]
     total_cost: float
     stores_used: list[str]
+    suggestions: list[Suggestion] = []  # substitution suggestions for unmatched items
 
 
 def _query_products_for_category(keyword: str, store_ids: list[str] | None = None):
-    """Query cheapest products matching a keyword."""
+    """Query products matching a keyword, returning up to 30 for LLM ranking."""
     with get_db() as conn:
         cur = conn.cursor()
         kw = f"%{keyword.lower()}%"
@@ -77,29 +88,88 @@ def _query_products_for_category(keyword: str, store_ids: list[str] | None = Non
 
     results = [dict(r) for r in rows]
     results.sort(key=lambda r: float(r["price"]))
-    return results[:10]
+    return results[:30]
 
 
 @router.post("/optimize", response_model=BasketResponse)
-def optimize_basket(req: BasketRequest):
+async def optimize_basket(req: BasketRequest):
     """
-    Greedy basket optimizer: picks cheapest product per category,
-    consolidating into fewest stores (up to max_shops).
+    Basket optimizer with optional LLM-powered product matching.
+    When smart_match=True, uses LLM to filter irrelevant results and suggest substitutions.
+    When smart_match=False, uses simple keyword matching (faster, no LLM cost).
     """
-    candidates: dict[str, list[dict]] = {}
-    for cat in req.categories:
-        rows = _query_products_for_category(cat, req.store_ids)
-        if rows:
-            candidates[cat] = rows
+    matcher = None
+    if req.smart_match:
+        print(f"\n[Basket] 🧠 Smart match ENABLED — using LLM to filter products")
+        try:
+            llm = get_llm_provider()
+            matcher = ProductMatcher(llm)
+            print(f"[Basket] ✅ LLM provider loaded: {type(llm).__name__}")
+        except Exception as e:
+            print(f"[Basket] ⚠ LLM unavailable, falling back to keyword matching: {e}")
+            matcher = None
+    else:
+        print(f"\n[Basket] ⚡ Smart match DISABLED — using keyword matching only (no AI)")
 
+    candidates: dict[str, list[dict]] = {}
+    suggestions: list[Suggestion] = []
+
+    for cat in req.categories:
+        raw_results = _query_products_for_category(cat, req.store_ids)
+
+        if not raw_results:
+            # Nothing found at all for this keyword
+            suggestions.append(Suggestion(
+                category=cat,
+                product_id="",
+                product_name="",
+                reason=f"No se encontraron productos para '{cat}' en las tiendas disponibles",
+            ))
+            continue
+
+        if matcher:
+            # Use LLM to rank and filter
+            try:
+                match_result = await matcher.match_products(cat, raw_results)
+
+                if match_result.get("no_exact_match"):
+                    # LLM says none of the results are what the user wants
+                    suggestion = match_result.get("suggestion")
+                    if suggestion:
+                        suggestions.append(Suggestion(
+                            category=cat,
+                            product_id=suggestion.get("product_id", ""),
+                            product_name=suggestion.get("name", ""),
+                            reason=suggestion.get("reason", "Producto alternativo sugerido"),
+                        ))
+                        # Still include the suggestion as a candidate so the optimizer can use it
+                        matched_ids = {suggestion["product_id"]}
+                        filtered = [r for r in raw_results if str(r["product_id"]) in matched_ids]
+                        if filtered:
+                            candidates[cat] = filtered
+                    continue
+
+                # Filter raw_results to only LLM-approved products
+                matched_ids = {m["product_id"] for m in match_result.get("matches", [])}
+                filtered = [r for r in raw_results if str(r["product_id"]) in matched_ids]
+                candidates[cat] = filtered if filtered else raw_results[:10]
+
+            except Exception:
+                # LLM failed, fall back to raw results
+                candidates[cat] = raw_results[:10]
+        else:
+            candidates[cat] = raw_results[:10]
+
+    # Greedy optimizer: cheapest product per category, fewest stores
     selected_shops: set = set()
     items: list[BasketItem] = []
 
-    # Rarest categories first for better consolidation
     ordered_cats = sorted(candidates, key=lambda c: len(candidates[c]))
 
     for cat in ordered_cats:
         rows = candidates[cat]
+        if not rows:
+            continue
         match = next((r for r in rows if str(r["store_id"]) in selected_shops), None)
         if match is None:
             if len(selected_shops) < req.max_shops:
@@ -126,4 +196,5 @@ def optimize_basket(req: BasketRequest):
         items=items,
         total_cost=total,
         stores_used=list(selected_shops),
+        suggestions=suggestions,
     )

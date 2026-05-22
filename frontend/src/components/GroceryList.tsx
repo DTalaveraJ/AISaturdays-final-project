@@ -26,6 +26,8 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
     setCategories(categories.filter((_, i) => i !== idx));
   };
 
+  const [smartMatch, setSmartMatch] = useState(false);
+
   const handleOptimize = async () => {
     if (categories.length === 0) return;
     setLoading(true);
@@ -38,12 +40,20 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
           budget,
           n_people: nPeople,
           max_shops: maxShops,
+          smart_match: smartMatch,
         }),
       });
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error("Basket error:", res.status, errText);
+        alert(`Error al optimizar: ${errText}`);
+        return;
+      }
       const data = await res.json();
       onOptimize(data);
     } catch (err) {
       console.error("Basket optimization failed:", err);
+      alert("Error de conexión al optimizar la cesta");
     } finally {
       setLoading(false);
     }
@@ -123,6 +133,19 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
           />
         </label>
       </div>
+
+      {/* Smart match toggle */}
+      <label className="flex items-center gap-2 mb-4 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={smartMatch}
+          onChange={(e) => setSmartMatch(e.target.checked)}
+          className="rounded border-gray-300"
+        />
+        <span className="text-sm text-gray-600">
+          🧠 Búsqueda inteligente (usa IA para filtrar productos relevantes)
+        </span>
+      </label>
 
       <button
         onClick={handleOptimize}
