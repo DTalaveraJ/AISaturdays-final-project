@@ -37,13 +37,15 @@ export function RecipeParser({ onIngredientsFound }: Props) {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow p-4">
-      <h2 className="font-semibold text-lg mb-2">🍳 Importar receta</h2>
-      <p className="text-sm text-gray-500 mb-3">
+    <div className="bg-[#1a3646] rounded-lg shadow-lg border border-[#2c6675] p-4">
+      <h2 className="font-semibold text-lg mb-2 text-gray-100">
+        🍳 Importar receta
+      </h2>
+      <p className="text-sm text-gray-400 mb-3">
         Pega una receta y la IA extraerá los ingredientes automáticamente
       </p>
       <textarea
-        className="w-full border rounded-md p-2 text-sm h-28 resize-none"
+        className="w-full bg-[#0e1626] border border-[#304a7d] rounded-md p-2 text-sm h-28 resize-none text-gray-200 placeholder-gray-500 focus:border-[#2c6675] focus:outline-none"
         placeholder="Pega aquí tu receta..."
         value={text}
         onChange={(e) => setText(e.target.value)}

@@ -1,1 +1,25 @@
 @import "tailwindcss";
+
+/* Dark theme for Google Maps InfoWindow popups */
+.gm-style .gm-style-iw-c {
+  background: #1a3646 !important;
+  border: 1px solid #2c6675 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5) !important;
+  padding: 0 !important;
+}
+
+.gm-style .gm-style-iw-d {
+  overflow: auto !important;
+}
+
+.gm-style .gm-style-iw-tc::after {
+  background: #1a3646 !important;
+  border-right: 1px solid #2c6675 !important;
+  border-bottom: 1px solid #2c6675 !important;
+}
+
+/* Close button */
+.gm-style .gm-style-iw-c button[aria-label="Close"] {
+  filter: invert(0.8) !important;
+}

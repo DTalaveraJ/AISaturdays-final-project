@@ -15,8 +15,10 @@ class Settings(BaseSettings):
     ors_api_key: str = ""
 
     # LLM for recipe parsing (swappable)
-    llm_provider: str = "gemini"  # "gemini" or "ollama"
+    llm_provider: str = "gemini"  # "gemini", "openai", or "ollama"
     gemini_api_key: str = ""
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b"
 

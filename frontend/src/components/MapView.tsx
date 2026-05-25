@@ -141,9 +141,9 @@ function buildInfoWindowContent(
 ): string {
   if (isHome) {
     return `
-      <div style="font-family: system-ui, sans-serif; padding: 4px; min-width: 160px;">
-        <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px;">🏠 Tu casa</div>
-        <div style="color: #6b7280; font-size: 12px;">Punto de inicio y fin</div>
+      <div style="font-family: system-ui, sans-serif; padding: 8px; min-width: 160px; background: #1a3646; border-radius: 8px;">
+        <div style="font-weight: 600; font-size: 14px; margin-bottom: 4px; color: #f3f4f6;">🏠 Tu casa</div>
+        <div style="color: #8ec3b9; font-size: 12px;">Punto de inicio y fin</div>
       </div>`;
   }
 
@@ -152,23 +152,23 @@ function buildInfoWindowContent(
       ? items
           .map(
             (item) => `
-        <div style="display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; border-bottom: 1px solid #f3f4f6;">
-          <span style="font-size: 12px;">${item.product_name}</span>
-          <span style="font-size: 12px; color: #6b7280; white-space: nowrap;">${item.quantity}x ${item.unit_price.toFixed(2)}€</span>
+        <div style="display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid #304a7d;">
+          <span style="font-size: 12px; color: #d1d5db;">${item.product_name}</span>
+          <span style="font-size: 12px; color: #8ec3b9; white-space: nowrap;">${item.quantity}x ${item.unit_price.toFixed(2)}€</span>
         </div>`,
           )
           .join("")
-      : `<div style="color: #9ca3af; font-size: 12px;">Sin productos asignados</div>`;
+      : `<div style="color: #6b7280; font-size: 12px;">Sin productos asignados</div>`;
 
   const total = items.reduce((sum, i) => sum + i.line_total, 0);
 
   return `
-    <div style="font-family: system-ui, sans-serif; padding: 4px; min-width: 220px; max-width: 300px;">
-      <div style="font-weight: 600; font-size: 14px; color: #059669; margin-bottom: 2px;">
+    <div style="font-family: system-ui, sans-serif; padding: 8px; min-width: 220px; max-width: 300px; background: #1a3646; border-radius: 8px;">
+      <div style="font-weight: 600; font-size: 14px; color: #10b981; margin-bottom: 2px;">
         🛒 ${stop.name}
       </div>
-      ${stop.address ? `<div style="color: #6b7280; font-size: 11px; margin-bottom: 8px;">${stop.address}</div>` : ""}
-      <div style="font-size: 11px; font-weight: 600; color: #374151; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">
+      ${stop.address ? `<div style="color: #6f9ba5; font-size: 11px; margin-bottom: 8px;">${stop.address}</div>` : ""}
+      <div style="font-size: 11px; font-weight: 600; color: #8ec3b9; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">
         Productos a comprar:
       </div>
       <div style="max-height: 150px; overflow-y: auto;">
@@ -177,9 +177,9 @@ function buildInfoWindowContent(
       ${
         items.length > 0
           ? `
-        <div style="margin-top: 8px; padding-top: 6px; border-top: 2px solid #d1fae5; display: flex; justify-content: space-between; font-weight: 600; font-size: 13px;">
-          <span>Subtotal</span>
-          <span style="color: #059669;">${total.toFixed(2)}€</span>
+        <div style="margin-top: 8px; padding-top: 6px; border-top: 2px solid #2c6675; display: flex; justify-content: space-between; font-weight: 600; font-size: 13px;">
+          <span style="color: #d1d5db;">Subtotal</span>
+          <span style="color: #10b981;">${total.toFixed(2)}€</span>
         </div>`
           : ""
       }

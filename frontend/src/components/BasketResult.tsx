@@ -25,7 +25,7 @@ interface Props {
     stores_used: string[];
     suggestions?: Suggestion[];
   };
-  onRouteReady: (route: any) => void;
+  onRouteReady: (route: any, params?: any) => void;
   transportMode: string;
 }
 
@@ -76,7 +76,15 @@ export function BasketResult({ basket, onRouteReady, transportMode }: Props) {
         return;
       }
       const data = await res.json();
-      onRouteReady(data);
+      // Pass route params so parent can re-fetch on transport mode change
+      const routeParams: any = { store_ids: basket.stores_used };
+      if (body.home_lat) {
+        routeParams.home_lat = body.home_lat;
+        routeParams.home_lng = body.home_lng;
+      } else {
+        routeParams.home_address = body.home_address;
+      }
+      onRouteReady(data, routeParams);
     } catch (err) {
       console.error("Route optimization failed:", err);
       alert("Error al calcular la ruta. Verifica tu ubicación o dirección.");
@@ -86,8 +94,10 @@ export function BasketResult({ basket, onRouteReady, transportMode }: Props) {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow p-4">
-      <h2 className="font-semibold text-lg mb-2">✅ Cesta optimizada</h2>
+    <div className="bg-[#1a3646] rounded-lg shadow-lg border border-[#2c6675] p-4">
+      <h2 className="font-semibold text-lg mb-2 text-gray-100">
+        ✅ Cesta optimizada
+      </h2>
 
       {/* Suggestions / substitutions */}
       {basket.suggestions && basket.suggestions.length > 0 && (
@@ -95,21 +105,21 @@ export function BasketResult({ basket, onRouteReady, transportMode }: Props) {
           {basket.suggestions.map((sug, idx) => (
             <div
               key={idx}
-              className="bg-amber-50 border border-amber-200 rounded-md p-3"
+              className="bg-amber-900/30 border border-amber-700/50 rounded-md p-3"
             >
               <div className="flex items-start gap-2">
-                <span className="text-amber-500 text-lg">💡</span>
+                <span className="text-amber-400 text-lg">💡</span>
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-amber-800">
+                  <p className="text-sm font-medium text-amber-300">
                     No se encontró: &quot;{sug.category}&quot;
                   </p>
                   {sug.product_name && (
-                    <p className="text-sm text-amber-700 mt-0.5">
+                    <p className="text-sm text-amber-400 mt-0.5">
                       Sugerencia:{" "}
                       <span className="font-medium">{sug.product_name}</span>
                     </p>
                   )}
-                  <p className="text-xs text-amber-600 mt-0.5">{sug.reason}</p>
+                  <p className="text-xs text-amber-500 mt-0.5">{sug.reason}</p>
                 </div>
               </div>
             </div>
@@ -120,10 +130,10 @@ export function BasketResult({ basket, onRouteReady, transportMode }: Props) {
       {/* Items grouped by store */}
       {Object.entries(byStore).map(([store, items]) => (
         <div key={store} className="mb-3">
-          <h3 className="font-medium text-sm text-blue-700">📍 {store}</h3>
+          <h3 className="font-medium text-sm text-[#8ec3b9]">📍 {store}</h3>
           <ul className="ml-4 text-sm space-y-0.5">
             {items.map((item, idx) => (
-              <li key={idx} className="flex justify-between">
+              <li key={idx} className="flex justify-between text-gray-300">
                 <span>{item.product_name}</span>
                 <span className="text-gray-500">
                   {item.quantity}x {item.unit_price.toFixed(2)}€ ={" "}
@@ -135,14 +145,14 @@ export function BasketResult({ basket, onRouteReady, transportMode }: Props) {
         </div>
       ))}
 
-      <div className="border-t pt-2 mt-2 flex justify-between font-semibold">
+      <div className="border-t border-[#304a7d] pt-2 mt-2 flex justify-between font-semibold text-gray-100">
         <span>Total</span>
-        <span>{basket.total_cost.toFixed(2)}€</span>
+        <span className="text-green-400">{basket.total_cost.toFixed(2)}€</span>
       </div>
 
       {/* Location selector */}
-      <div className="mt-4 border-t pt-4">
-        <p className="text-sm font-medium text-gray-700 mb-2">
+      <div className="mt-4 border-t border-[#304a7d] pt-4">
+        <p className="text-sm font-medium text-gray-300 mb-2">
           📍 Punto de inicio
         </p>
         <div className="flex gap-2 mb-2">
@@ -150,8 +160,8 @@ export function BasketResult({ basket, onRouteReady, transportMode }: Props) {
             onClick={() => setLocationMode("gps")}
             className={`flex-1 py-1.5 text-sm rounded-md border transition-colors ${
               locationMode === "gps"
-                ? "bg-blue-50 border-blue-300 text-blue-700 font-medium"
-                : "border-gray-200 text-gray-500 hover:bg-gray-50"
+                ? "bg-blue-900/40 border-blue-500 text-blue-300 font-medium"
+                : "border-[#304a7d] text-gray-400 hover:bg-[#0e1626]"
             }`}
           >
             📡 Mi ubicación
@@ -160,8 +170,8 @@ export function BasketResult({ basket, onRouteReady, transportMode }: Props) {
             onClick={() => setLocationMode("address")}
             className={`flex-1 py-1.5 text-sm rounded-md border transition-colors ${
               locationMode === "address"
-                ? "bg-blue-50 border-blue-300 text-blue-700 font-medium"
-                : "border-gray-200 text-gray-500 hover:bg-gray-50"
+                ? "bg-blue-900/40 border-blue-500 text-blue-300 font-medium"
+                : "border-[#304a7d] text-gray-400 hover:bg-[#0e1626]"
             }`}
           >
             ✏️ Escribir dirección
@@ -174,7 +184,7 @@ export function BasketResult({ basket, onRouteReady, transportMode }: Props) {
             value={address}
             onChange={(e) => setAddress(e.target.value)}
             placeholder="Ej: Calle Gran Vía 1, Madrid"
-            className="w-full border rounded-md px-3 py-2 text-sm mb-2"
+            className="w-full bg-[#0e1626] border border-[#304a7d] rounded-md px-3 py-2 text-sm mb-2 text-gray-200 placeholder-gray-500 focus:border-[#2c6675] focus:outline-none"
             onKeyDown={(e) => e.key === "Enter" && handleRoute()}
           />
         )}

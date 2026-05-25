@@ -20,6 +20,9 @@ def get_llm_provider() -> LLMProvider:
     if settings.llm_provider == "gemini":
         from app.services.llm_gemini import GeminiProvider
         return GeminiProvider()
+    elif settings.llm_provider == "openai":
+        from app.services.llm_openai import OpenAIProvider
+        return OpenAIProvider()
     else:
         from app.services.llm_ollama import OllamaProvider
         return OllamaProvider()

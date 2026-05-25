@@ -155,7 +155,7 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
                 return cat, None, None
 
         # Ollama is single-threaded — run sequentially to avoid queue starvation
-        # Gemini handles concurrency fine — run in parallel
+        # Gemini/OpenAI handle concurrency fine — run in parallel
         from app.config import settings
         if settings.llm_provider == "ollama":
             print(f"[Basket] 🐌 Ollama detected — processing {len(req.categories)} categories sequentially")

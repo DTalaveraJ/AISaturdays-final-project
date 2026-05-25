@@ -60,14 +60,16 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow p-4">
-      <h2 className="font-semibold text-lg mb-2">🛒 Lista de la compra</h2>
+    <div className="bg-[#1a3646] rounded-lg shadow-lg border border-[#2c6675] p-4">
+      <h2 className="font-semibold text-lg mb-2 text-gray-100">
+        🛒 Lista de la compra
+      </h2>
 
       {/* Add item */}
       <div className="flex gap-2 mb-3">
         <input
           type="text"
-          className="flex-1 border rounded-md px-3 py-1.5 text-sm"
+          className="flex-1 bg-[#0e1626] border border-[#304a7d] rounded-md px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:border-[#2c6675] focus:outline-none"
           placeholder="Añadir producto (ej: leche, pan, pollo...)"
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -75,7 +77,7 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
         />
         <button
           onClick={addItem}
-          className="px-3 py-1.5 bg-green-500 text-white rounded-md text-sm hover:bg-green-600"
+          className="px-3 py-1.5 bg-green-600 text-white rounded-md text-sm hover:bg-green-700"
         >
           +
         </button>
@@ -87,12 +89,12 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
           {categories.map((cat, idx) => (
             <li
               key={idx}
-              className="flex justify-between items-center text-sm bg-gray-50 px-3 py-1.5 rounded"
+              className="flex justify-between items-center text-sm bg-[#0e1626] border border-[#304a7d] px-3 py-1.5 rounded text-gray-200"
             >
               <span>{cat}</span>
               <button
                 onClick={() => removeItem(idx)}
-                className="text-red-400 hover:text-red-600"
+                className="text-red-400 hover:text-red-300"
               >
                 ✕
               </button>
@@ -104,31 +106,31 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
       {/* Settings */}
       <div className="grid grid-cols-3 gap-3 mb-4 text-sm">
         <label className="flex flex-col">
-          <span className="text-gray-500">Presupuesto €</span>
+          <span className="text-gray-400">Presupuesto €</span>
           <input
             type="number"
             value={budget}
             onChange={(e) => setBudget(+e.target.value)}
-            className="border rounded px-2 py-1 mt-1"
+            className="bg-[#0e1626] border border-[#304a7d] rounded px-2 py-1 mt-1 text-gray-200 focus:border-[#2c6675] focus:outline-none"
           />
         </label>
         <label className="flex flex-col">
-          <span className="text-gray-500">Personas</span>
+          <span className="text-gray-400">Personas</span>
           <input
             type="number"
             value={nPeople}
             onChange={(e) => setNPeople(+e.target.value)}
-            className="border rounded px-2 py-1 mt-1"
+            className="bg-[#0e1626] border border-[#304a7d] rounded px-2 py-1 mt-1 text-gray-200 focus:border-[#2c6675] focus:outline-none"
             min={1}
           />
         </label>
         <label className="flex flex-col">
-          <span className="text-gray-500">Máx. tiendas</span>
+          <span className="text-gray-400">Máx. tiendas</span>
           <input
             type="number"
             value={maxShops}
             onChange={(e) => setMaxShops(+e.target.value)}
-            className="border rounded px-2 py-1 mt-1"
+            className="bg-[#0e1626] border border-[#304a7d] rounded px-2 py-1 mt-1 text-gray-200 focus:border-[#2c6675] focus:outline-none"
             min={1}
           />
         </label>
@@ -140,9 +142,9 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
           type="checkbox"
           checked={smartMatch}
           onChange={(e) => setSmartMatch(e.target.checked)}
-          className="rounded border-gray-300"
+          className="rounded border-[#304a7d] bg-[#0e1626]"
         />
-        <span className="text-sm text-gray-600">
+        <span className="text-sm text-gray-400">
           🧠 Búsqueda inteligente (usa IA para filtrar productos relevantes)
         </span>
       </label>
