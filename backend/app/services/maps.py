@@ -5,11 +5,7 @@ Switch via MAPS_PROVIDER env var ("google" or "ors").
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-
-import httpx
-
-from app.config import settings
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -20,11 +16,25 @@ class GeocodedLocation:
 
 
 @dataclass
+class TransitStep:
+    mode: str           # "WALKING" | "TRANSIT"
+    instruction: str
+    duration: str
+    distance: str = ""
+    line_name: str = ""
+    vehicle_type: str = ""
+    departure_stop: str = ""
+    arrival_stop: str = ""
+    num_stops: int = 0
+
+
+@dataclass
 class RouteResult:
     ordered_stops: list[dict]
     distance_km: float
     duration_min: float
-    polyline: str | None = None  # encoded polyline for map rendering
+    polyline: str | None = None
+    transit_steps: list[TransitStep] = field(default_factory=list)
 
 
 class MapsProvider(ABC):

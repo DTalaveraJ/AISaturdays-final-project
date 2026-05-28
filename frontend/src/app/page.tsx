@@ -5,6 +5,7 @@ import { GroceryList } from "@/components/GroceryList";
 import { RecipeParser } from "@/components/RecipeParser";
 import { BasketResult } from "@/components/BasketResult";
 import { MapView } from "@/components/MapView";
+import { TransitSteps } from "@/components/TransitSteps";
 
 interface RouteParams {
   home_lat?: number;
@@ -36,7 +37,7 @@ export default function Home() {
     }
   }, []);
 
-  // Auto-recalculate route when transport mode changes
+  // Re-route when transport mode changes (requires a previous basket optimisation)
   useEffect(() => {
     if (!lastRouteParams.current || isRecalculating.current) return;
     isRecalculating.current = true;
@@ -45,10 +46,15 @@ export default function Home() {
     });
   }, [transportMode, fetchRoute]);
 
-  const handleRouteReady = useCallback((data: any, params?: RouteParams) => {
-    setRoute(data);
-    if (params) lastRouteParams.current = params;
-  }, []);
+  // Called by GroceryList after basket optimisation — auto-triggers route calculation
+  const handleBasketReady = useCallback(
+    async (data: any, routeParams: RouteParams) => {
+      setBasket(data);
+      lastRouteParams.current = routeParams;
+      await fetchRoute(routeParams, transportMode);
+    },
+    [fetchRoute, transportMode],
+  );
 
   return (
     <main className="max-w-7xl mx-auto px-4 py-8">
@@ -76,26 +82,27 @@ export default function Home() {
           <GroceryList
             categories={categories}
             setCategories={setCategories}
-            onOptimize={setBasket}
+            onOptimize={handleBasketReady}
+            transportMode={transportMode}
+            onTransportModeChange={setTransportMode}
           />
 
           {basket && (
-            <BasketResult
-              basket={basket}
-              onRouteReady={handleRouteReady}
-              transportMode={transportMode}
-            />
+            <BasketResult basket={basket} transportMode={transportMode} />
           )}
         </div>
 
-        {/* Right column: map */}
-        <div className="lg:sticky lg:top-8 h-[800px] w-[800px]">
+        {/* Right column: map + transit steps */}
+        <div className="lg:sticky lg:top-8">
           <MapView
             route={route}
             basket={basket}
             transportMode={transportMode}
             onTransportModeChange={setTransportMode}
           />
+          {transportMode === "transit" && route?.transit_steps?.length > 0 && (
+            <TransitSteps steps={route.transit_steps} />
+          )}
         </div>
       </div>
     </main>

@@ -28,12 +28,13 @@ class LLMProvider(ABC):
 
 
 RECIPE_PROMPT = """Extract all ingredients from the following recipe text.
-Return a JSON array where each element has:
+Return a JSON object with a single key "ingredients" containing an array where each element has:
 - "name": the ingredient name in Spanish (e.g., "leche", "aceite de oliva")
 - "quantity": the amount needed as a string (e.g., "500ml", "2 unidades", "1kg")
 - "category": a general food category in Spanish (e.g., "lácteos", "aceites", "carnes")
 
-Return ONLY the JSON array, no other text.
+Example format:
+{{"ingredients": [{{"name": "leche", "quantity": "500ml", "category": "lácteos"}}]}}
 
 Recipe:
 {recipe_text}"""

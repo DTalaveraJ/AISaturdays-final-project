@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     # Google Maps (swappable with ORS)
     google_maps_api_key: str = ""
-    maps_provider: str = "google"  # "google" or "ors"
+    maps_provider: str = "ors"  # "google" or "ors"
     ors_api_key: str = ""
 
     # LLM for recipe parsing (swappable)

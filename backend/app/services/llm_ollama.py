@@ -57,9 +57,18 @@ class OllamaProvider(LLMProvider):
         except json.JSONDecodeError:
             raise RuntimeError(f"Ollama response is not valid JSON: {text[:200]}")
 
-        # Handle case where model returns {"ingredients": [...]} instead of [...]
-        if isinstance(parsed, dict) and "ingredients" in parsed:
-            parsed = parsed["ingredients"]
+        # Ollama's "format": "json" always produces an object, never a bare array.
+        # Extract the ingredient list from whatever key the model used.
+        if isinstance(parsed, dict):
+            for key in ("ingredients", "items", "result", "data", "lista", "productos"):
+                if isinstance(parsed.get(key), list):
+                    parsed = parsed[key]
+                    break
+            else:
+                for v in parsed.values():
+                    if isinstance(v, list):
+                        parsed = v
+                        break
 
         if not isinstance(parsed, list):
             raise RuntimeError(f"Expected a JSON array, got: {type(parsed).__name__}")

@@ -2,18 +2,44 @@
 
 import { useState } from "react";
 
+interface RouteParams {
+  home_lat?: number;
+  home_lng?: number;
+  home_address?: string;
+  store_ids: string[];
+}
+
 interface Props {
   categories: string[];
   setCategories: (cats: string[]) => void;
-  onOptimize: (basket: any) => void;
+  onOptimize: (basket: any, routeParams: RouteParams) => void;
+  transportMode: string;
+  onTransportModeChange: (mode: string) => void;
 }
 
-export function GroceryList({ categories, setCategories, onOptimize }: Props) {
+const TRANSPORT_OPTIONS = [
+  { value: "driving",   label: "Coche",    icon: "🚗" },
+  { value: "walking",   label: "A pie",    icon: "🚶" },
+  { value: "bicycling", label: "Bici",     icon: "🚲" },
+  { value: "transit",   label: "Bus/Metro", icon: "🚌" },
+];
+
+export function GroceryList({
+  categories,
+  setCategories,
+  onOptimize,
+  transportMode,
+  onTransportModeChange,
+}: Props) {
   const [input, setInput] = useState("");
   const [budget, setBudget] = useState(35);
   const [nPeople, setNPeople] = useState(2);
   const [maxShops, setMaxShops] = useState(3);
   const [loading, setLoading] = useState(false);
+  const [smartMatch, setSmartMatch] = useState(false);
+  const [maxTravelTime, setMaxTravelTime] = useState<number | "">(60);
+  const [locationMode, setLocationMode] = useState<"gps" | "address">("gps");
+  const [homeAddress, setHomeAddress] = useState("");
 
   const addItem = () => {
     if (input.trim()) {
@@ -26,12 +52,28 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
     setCategories(categories.filter((_, i) => i !== idx));
   };
 
-  const [smartMatch, setSmartMatch] = useState(false);
+  const resolveLocation = async (): Promise<Partial<RouteParams>> => {
+    if (locationMode === "gps") {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 }),
+      );
+      return { home_lat: pos.coords.latitude, home_lng: pos.coords.longitude };
+    }
+    if (homeAddress.trim()) return { home_address: homeAddress.trim() };
+    return {};
+  };
 
   const handleOptimize = async () => {
     if (categories.length === 0) return;
     setLoading(true);
     try {
+      let locationParams: Partial<RouteParams> = {};
+      try {
+        locationParams = await resolveLocation();
+      } catch {
+        // GPS denied or no address — optimise without proximity filter
+      }
+
       const res = await fetch("/api/basket/optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -41,16 +83,21 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
           n_people: nPeople,
           max_shops: maxShops,
           smart_match: smartMatch,
+          transport_mode: transportMode,
+          ...(maxTravelTime !== "" ? { max_travel_time_min: maxTravelTime } : {}),
+          ...locationParams,
         }),
       });
+
       if (!res.ok) {
         const errText = await res.text();
-        console.error("Basket error:", res.status, errText);
+        console.warn("Basket error:", res.status, errText);
         alert(`Error al optimizar: ${errText}`);
         return;
       }
+
       const data = await res.json();
-      onOptimize(data);
+      onOptimize(data, { store_ids: data.stores_used, ...locationParams });
     } catch (err) {
       console.error("Basket optimization failed:", err);
       alert("Error de conexión al optimizar la cesta");
@@ -61,6 +108,68 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
 
   return (
     <div className="bg-[#1a3646] rounded-lg shadow-lg border border-[#2c6675] p-4">
+
+      {/* Transport mode */}
+      <div className="mb-4">
+        <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
+          Medio de transporte
+        </p>
+        <div className="grid grid-cols-4 gap-1.5">
+          {TRANSPORT_OPTIONS.map(({ value, label, icon }) => (
+            <button
+              key={value}
+              onClick={() => onTransportModeChange(value)}
+              className={`py-2 px-1 rounded-md text-xs font-medium border transition-colors flex flex-col items-center gap-0.5 ${
+                transportMode === value
+                  ? "bg-green-700 border-green-500 text-white"
+                  : "border-[#304a7d] text-gray-400 hover:bg-[#0e1626]"
+              }`}
+            >
+              <span className="text-base">{icon}</span>
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Home location */}
+      <div className="mb-4">
+        <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
+          Punto de inicio
+        </p>
+        <div className="flex gap-2 mb-2">
+          <button
+            onClick={() => setLocationMode("gps")}
+            className={`flex-1 py-1.5 text-xs rounded-md border transition-colors ${
+              locationMode === "gps"
+                ? "bg-blue-900/40 border-blue-500 text-blue-300 font-medium"
+                : "border-[#304a7d] text-gray-400 hover:bg-[#0e1626]"
+            }`}
+          >
+            📡 Mi ubicación
+          </button>
+          <button
+            onClick={() => setLocationMode("address")}
+            className={`flex-1 py-1.5 text-xs rounded-md border transition-colors ${
+              locationMode === "address"
+                ? "bg-blue-900/40 border-blue-500 text-blue-300 font-medium"
+                : "border-[#304a7d] text-gray-400 hover:bg-[#0e1626]"
+            }`}
+          >
+            ✏️ Escribir dirección
+          </button>
+        </div>
+        {locationMode === "address" && (
+          <input
+            type="text"
+            value={homeAddress}
+            onChange={(e) => setHomeAddress(e.target.value)}
+            placeholder="Ej: Calle Gran Vía 1, Madrid"
+            className="w-full bg-[#0e1626] border border-[#304a7d] rounded-md px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:border-[#2c6675] focus:outline-none"
+          />
+        )}
+      </div>
+
       <h2 className="font-semibold text-lg mb-2 text-gray-100">
         🛒 Lista de la compra
       </h2>
@@ -104,7 +213,7 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
       )}
 
       {/* Settings */}
-      <div className="grid grid-cols-3 gap-3 mb-4 text-sm">
+      <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
         <label className="flex flex-col">
           <span className="text-gray-400">Presupuesto €</span>
           <input
@@ -134,6 +243,17 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
             min={1}
           />
         </label>
+        <label className="flex flex-col">
+          <span className="text-gray-400">Tiempo max. (min)</span>
+          <input
+            type="number"
+            value={maxTravelTime}
+            onChange={(e) => setMaxTravelTime(e.target.value === "" ? "" : +e.target.value)}
+            placeholder="Auto"
+            className="bg-[#0e1626] border border-[#304a7d] rounded px-2 py-1 mt-1 text-gray-200 placeholder-gray-500 focus:border-[#2c6675] focus:outline-none"
+            min={5}
+          />
+        </label>
       </div>
 
       {/* Smart match toggle */}
@@ -152,8 +272,7 @@ export function GroceryList({ categories, setCategories, onOptimize }: Props) {
       <button
         onClick={handleOptimize}
         disabled={loading || categories.length === 0}
-        className="w-full py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700
-                   disabled:opacity-50 font-medium"
+        className="w-full py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
       >
         {loading ? "Optimizando..." : "🔍 Optimizar cesta"}
       </button>

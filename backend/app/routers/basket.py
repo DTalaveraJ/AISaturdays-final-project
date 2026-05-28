@@ -2,6 +2,7 @@
 Basket optimization endpoint — with optional LLM-powered product matching.
 """
 
+import math
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -11,14 +12,55 @@ from app.services.product_matcher import ProductMatcher
 
 router = APIRouter()
 
+# Average urban speeds (km/h) and default max round-trip times (min) per transport mode
+TRANSPORT_SPEEDS_KMH = {
+    "walking": 4.5,
+    "bicycling": 15.0,
+    "driving": 30.0,
+    "transit": 20.0,
+}
+DEFAULT_MAX_ROUND_TRIP_MIN = {
+    "walking": 60,
+    "bicycling": 45,
+    "driving": 90,
+    "transit": 90,
+}
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dlng / 2) ** 2
+    )
+    return R * 2 * math.asin(math.sqrt(a))
+
+
+def _one_way_min(
+    lat1: float, lng1: float, lat2: float, lng2: float, transport_mode: str
+) -> float:
+    """Estimate one-way travel time in minutes (straight-line × 1.4 detour factor)."""
+    dist_km = _haversine_km(lat1, lng1, lat2, lng2) * 1.4
+    speed = TRANSPORT_SPEEDS_KMH.get(transport_mode, 20.0)
+    return (dist_km / speed) * 60.0
+
 
 class BasketRequest(BaseModel):
     categories: list[str]
     budget: float = 50.0
     n_people: int = 1
     max_shops: int = 3
-    store_ids: list[str] | None = None  # optional filter to specific stores
-    smart_match: bool = False  # set True to use LLM filtering (slower but more accurate)
+    store_ids: list[str] | None = None
+    smart_match: bool = False
+    # Transport-aware optimization
+    home_lat: float | None = None
+    home_lng: float | None = None
+    transport_mode: str = "driving"
+    max_travel_time_min: float | None = None  # None → default per transport mode
 
 
 class BasketItem(BaseModel):
@@ -41,7 +83,8 @@ class BasketResponse(BaseModel):
     items: list[BasketItem]
     total_cost: float
     stores_used: list[str]
-    suggestions: list[Suggestion] = []  # substitution suggestions for unmatched items
+    suggestions: list[Suggestion] = []
+    estimated_travel_min: float | None = None
 
 
 def _query_products_for_category(keyword: str, store_ids: list[str] | None = None):
@@ -100,16 +143,57 @@ async def optimize_basket(req: BasketRequest):
     """
     try:
         return await _do_optimize(req)
-    except Exception as e:
-        print(f"[Basket] 💥 Unhandled error: {e}")
+    except HTTPException:
+        raise
+    except BaseException as e:
         import traceback
+        print(f"[Basket] 💥 Unhandled error: {type(e).__name__}: {e}")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Basket optimization failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Basket optimization failed: {type(e).__name__}: {e}")
 
 
 async def _do_optimize(req: BasketRequest) -> BasketResponse:
     import asyncio
 
+    # --- Proximity filtering ---
+    # If home coords are provided, restrict to stores reachable within the time budget.
+    effective_store_ids = req.store_ids
+    store_one_way: dict[str, float] = {}  # store_id → estimated one-way minutes
+
+    if req.home_lat is not None and req.home_lng is not None:
+        max_rt = req.max_travel_time_min or DEFAULT_MAX_ROUND_TRIP_MIN.get(req.transport_mode, 90)
+
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, latitude, longitude FROM stores "
+                "WHERE latitude IS NOT NULL AND longitude IS NOT NULL"
+            )
+            store_rows = cur.fetchall()
+
+        reachable: list[str] = []
+        for r in store_rows:
+            sid = str(r["id"])
+            t = _one_way_min(
+                req.home_lat, req.home_lng,
+                float(r["latitude"]), float(r["longitude"]),
+                req.transport_mode,
+            )
+            if t * 2 <= max_rt:
+                reachable.append(sid)
+                store_one_way[sid] = t
+
+        if req.store_ids:
+            effective_store_ids = [sid for sid in req.store_ids if sid in set(reachable)]
+        else:
+            effective_store_ids = reachable if reachable else None
+
+        print(
+            f"[Basket] 📍 {len(reachable)} stores reachable within "
+            f"{max_rt:.0f} min round-trip ({req.transport_mode})"
+        )
+
+    # --- LLM setup ---
     matcher = None
     if req.smart_match:
         print(f"\n[Basket] 🧠 Smart match ENABLED — using LLM to filter products")
@@ -126,7 +210,7 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
     # Step 1: Query DB for all categories (fast, no LLM)
     raw_by_cat: dict[str, list[dict]] = {}
     for cat in req.categories:
-        raw_results = _query_products_for_category(cat, req.store_ids)
+        raw_results = _query_products_for_category(cat, effective_store_ids)
         raw_by_cat[cat] = raw_results
 
     # Step 2: LLM matching (if enabled)
@@ -134,7 +218,6 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
     suggestions: list[Suggestion] = []
 
     if matcher:
-        # Process all categories through LLM — run concurrently for speed
         async def match_one(cat: str, raw_results: list[dict]):
             if not raw_results:
                 return cat, None, Suggestion(
@@ -144,7 +227,7 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
             try:
                 match_result = await asyncio.wait_for(
                     matcher.match_products(cat, raw_results),
-                    timeout=60.0,  # 60s max per category
+                    timeout=60.0,
                 )
                 return cat, match_result, None
             except asyncio.TimeoutError:
@@ -154,8 +237,6 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
                 print(f"[Basket] ⚠ Smart match failed for '{cat}': {e}")
                 return cat, None, None
 
-        # Ollama is single-threaded — run sequentially to avoid queue starvation
-        # Gemini/OpenAI handle concurrency fine — run in parallel
         from app.config import settings
         if settings.llm_provider == "ollama":
             print(f"[Basket] 🐌 Ollama detected — processing {len(req.categories)} categories sequentially")
@@ -176,7 +257,6 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
                 continue
 
             if match_result is None:
-                # LLM failed, fall back to raw results
                 if raw_results:
                     candidates[cat] = raw_results[:10]
                 continue
@@ -242,9 +322,17 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
 
     total = round(sum(i.line_total for i in items), 2)
 
+    # Estimate round-trip travel time through selected stores
+    estimated_travel_min: float | None = None
+    if store_one_way and selected_shops:
+        times = [store_one_way[sid] for sid in selected_shops if sid in store_one_way]
+        if times:
+            estimated_travel_min = round(max(times) * 2, 0)
+
     return BasketResponse(
         items=items,
         total_cost=total,
         stores_used=list(selected_shops),
         suggestions=suggestions,
+        estimated_travel_min=estimated_travel_min,
     )
