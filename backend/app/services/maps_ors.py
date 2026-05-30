@@ -138,7 +138,7 @@ class ORSMapsProvider(MapsProvider):
         home_stop = {"name": "🏠 Home", "lat": home.lat, "lng": home.lng}
         ordered_stops = (
             [home_stop]
-            + [{"name": s.get("name", ""), "lat": s["lat"], "lng": s["lng"]} for s in ordered]
+            + [{"name": s.get("name", ""), "lat": s["lat"], "lng": s["lng"], "address": s.get("address", "")} for s in ordered]
             + [home_stop]
         )
 

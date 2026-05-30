@@ -16,6 +16,11 @@ interface Suggestion {
   reason: string;
 }
 
+interface RouteStop {
+  name: string;
+  address?: string;
+}
+
 interface Props {
   basket: {
     items: BasketItem[];
@@ -25,11 +30,20 @@ interface Props {
     estimated_travel_min?: number;
   };
   transportMode: string;
+  route?: { ordered_stops: RouteStop[] } | null;
 }
 
-export function BasketResult({ basket, transportMode }: Props) {
+export function BasketResult({ basket, transportMode, route }: Props) {
   // Group items by store
   const byStore: Record<string, BasketItem[]> = {};
+
+  // Address lookup: store name → address (from route stops)
+  const storeAddress: Record<string, string> = {};
+  if (route?.ordered_stops) {
+    for (const stop of route.ordered_stops) {
+      if (stop.address) storeAddress[stop.name] = stop.address;
+    }
+  }
   for (const item of basket.items) {
     if (!byStore[item.store_name]) byStore[item.store_name] = [];
     byStore[item.store_name].push(item);
@@ -95,7 +109,14 @@ export function BasketResult({ basket, transportMode }: Props) {
       {/* Items grouped by store */}
       {Object.entries(byStore).map(([store, items]) => (
         <div key={store} className="mb-3">
-          <h3 className="font-medium text-sm text-[#8ec3b9]">📍 {store}</h3>
+          <h3 className="font-medium text-sm text-[#8ec3b9]">
+            📍 {store}
+            {storeAddress[store] && (
+              <span className="font-normal text-gray-500 ml-1">
+                ({storeAddress[store]})
+              </span>
+            )}
+          </h3>
           <ul className="ml-4 text-sm space-y-0.5">
             {items.map((item, idx) => (
               <li key={idx} className="flex justify-between text-gray-300">

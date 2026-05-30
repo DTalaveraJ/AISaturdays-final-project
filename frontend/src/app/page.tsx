@@ -88,7 +88,7 @@ export default function Home() {
           />
 
           {basket && (
-            <BasketResult basket={basket} transportMode={transportMode} />
+            <BasketResult basket={basket} transportMode={transportMode} route={route} />
           )}
         </div>
 
