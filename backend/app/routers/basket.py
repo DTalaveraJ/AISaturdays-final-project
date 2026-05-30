@@ -26,6 +26,9 @@ DEFAULT_MAX_ROUND_TRIP_MIN = {
     "transit": 90,
 }
 
+# Spanish stop words ignored when tokenising multi-word ingredient queries
+STOP_WORDS_ES = {"de", "del", "la", "el", "los", "las", "en", "con", "sin", "al", "a", "y", "o", "un", "una"}
+
 
 def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     R = 6371.0
@@ -87,15 +90,99 @@ class BasketResponse(BaseModel):
     estimated_travel_min: float | None = None
 
 
+def _rank_by_relevance(rows: list[dict], kw_lower: str) -> list[dict]:
+    """Sort candidates so the product itself appears before products that merely contain it.
+
+    Sort key: (tier, price_asc)
+      Tier 0 — name starts with the full query  ("aceite de oliva virgen extra ...")
+      Tier 1 — name starts with the first significant token  ("aceite ...")
+      Tier 2 — all significant tokens present anywhere in name
+      Tier 3 — partial match
+
+    Without this, cheap products where the keyword is a secondary ingredient
+    (e.g. "barra pan de aceite de oliva" at 0.57€) would crowd out the actual
+    product ("aceite de oliva virgen extra" at 3.65€) in the top-10 seen by the LLM.
+    """
+    tokens = [t for t in kw_lower.split() if len(t) > 2 and t not in STOP_WORDS_ES]
+    if not tokens:
+        tokens = kw_lower.split()
+    first = tokens[0] if tokens else kw_lower
+
+    def tier(r: dict) -> int:
+        name = r["name"].lower()
+        if name.startswith(kw_lower):
+            return 0
+        if name.startswith(first):
+            return 1
+        if tokens and all(t in name for t in tokens):
+            return 2
+        return 3
+
+    return sorted(rows, key=lambda r: (tier(r), float(r["price"])))
+
+
 def _query_products_for_category(keyword: str, store_ids: list[str] | None = None):
-    """Query products matching a keyword, returning up to 30 for LLM ranking."""
+    """Query products matching a keyword, returning up to 30 ranked by relevance.
+
+    Multi-word queries (e.g. 'tiras pasta lasaña') are split into significant
+    tokens, each searched separately, then results are merged and re-ranked.
+
+    For short single keywords (≤4 chars) we use word-boundary matching to avoid
+    false positives like 'sal' matching 'salchichas' or 'ensalada'.
+
+    Results are sorted by relevance (name starts with query = most relevant) then
+    price, so the actual product appears before cheaper items that merely mention
+    the keyword as an ingredient.
+    """
+    kw_lower = keyword.lower().strip()
+    tokens = kw_lower.split()
+
+    if len(tokens) > 1:
+        significant = [t for t in tokens if len(t) > 2 and t not in STOP_WORDS_ES]
+        if not significant:
+            significant = [max(tokens, key=len)]
+        seen: set[str] = set()
+        merged: list[dict] = []
+        for token in significant:
+            for row in _query_by_single_keyword(token, store_ids):
+                pid = str(row["product_id"])
+                if pid not in seen:
+                    seen.add(pid)
+                    merged.append(row)
+        return _rank_by_relevance(merged, kw_lower)[:30]
+
+    return _rank_by_relevance(_query_by_single_keyword(kw_lower, store_ids), kw_lower)[:30]
+
+
+def _query_by_single_keyword(keyword: str, store_ids: list[str] | None = None):
+    """Low-level DB query for a single keyword token."""
     with get_db() as conn:
         cur = conn.cursor()
-        kw = f"%{keyword.lower()}%"
+        kw_lower = keyword.lower().strip()
+
+        # Short words: require the keyword to appear as a whole word
+        # (preceded/followed by space, digit boundary, or string start/end).
+        # Longer words keep the original substring match.
+        if len(kw_lower) <= 4:
+            kw = f"% {kw_lower} %"          # surrounded by spaces (mid-string)
+            kw_start = f"{kw_lower} %"       # at the very beginning
+            kw_end = f"% {kw_lower}"         # at the very end
+            exact = kw_lower                 # exact full match
+            name_clause = (
+                "LOWER(p.name) LIKE %s OR LOWER(p.name) LIKE %s "
+                "OR LOWER(p.name) LIKE %s OR LOWER(p.name) = %s"
+            )
+            name_params = (kw, kw_start, kw_end, exact)
+        else:
+            kw = f"%{kw_lower}%"
+            name_clause = "LOWER(p.name) LIKE %s"
+            name_params = (kw,)
+
+        cat_kw = f"%{kw_lower}%"
 
         if store_ids:
             cur.execute(
-                """
+                f"""
                 SELECT DISTINCT ON (p.id)
                        p.id AS product_id, p.name, ps.price,
                        s.id AS store_id, s.name AS store_name
@@ -103,16 +190,15 @@ def _query_products_for_category(keyword: str, store_ids: list[str] | None = Non
                 JOIN price_snapshots ps ON ps.product_id = p.id
                 JOIN stores s ON p.store_id = s.id
                 LEFT JOIN categories c ON p.category_id = c.id
-                WHERE (LOWER(p.name) LIKE %s OR LOWER(c.slug) LIKE %s
-                       OR LOWER(c.name) LIKE %s)
+                WHERE ({name_clause} OR LOWER(c.slug) LIKE %s OR LOWER(c.name) LIKE %s)
                   AND s.id = ANY(%s::uuid[])
                 ORDER BY p.id, ps.scraped_at DESC
                 """,
-                (kw, kw, kw, store_ids),
+                (*name_params, cat_kw, cat_kw, store_ids),
             )
         else:
             cur.execute(
-                """
+                f"""
                 SELECT DISTINCT ON (p.id)
                        p.id AS product_id, p.name, ps.price,
                        s.id AS store_id, s.name AS store_name
@@ -120,18 +206,15 @@ def _query_products_for_category(keyword: str, store_ids: list[str] | None = Non
                 JOIN price_snapshots ps ON ps.product_id = p.id
                 JOIN stores s ON p.store_id = s.id
                 LEFT JOIN categories c ON p.category_id = c.id
-                WHERE LOWER(p.name) LIKE %s OR LOWER(c.slug) LIKE %s
-                       OR LOWER(c.name) LIKE %s
+                WHERE {name_clause} OR LOWER(c.slug) LIKE %s OR LOWER(c.name) LIKE %s
                 ORDER BY p.id, ps.scraped_at DESC
                 """,
-                (kw, kw, kw),
+                (*name_params, cat_kw, cat_kw),
             )
 
         rows = cur.fetchall()
 
-    results = [dict(r) for r in rows]
-    results.sort(key=lambda r: float(r["price"]))
-    return results[:30]
+    return [dict(r) for r in rows]
 
 
 @router.post("/optimize", response_model=BasketResponse)
@@ -218,7 +301,11 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
     suggestions: list[Suggestion] = []
 
     if matcher:
-        async def match_one(cat: str, raw_results: list[dict]):
+        # For sequential (Ollama) mode we track which store names are committed so far
+        # and pass them to each LLM call — the prompt uses this to prefer consolidation.
+        committed_store_names: list[str] = []
+
+        async def match_one(cat: str, raw_results: list[dict], current_stores: list[str]):
             if not raw_results:
                 return cat, None, Suggestion(
                     category=cat, product_id="", product_name="",
@@ -226,7 +313,11 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
                 )
             try:
                 match_result = await asyncio.wait_for(
-                    matcher.match_products(cat, raw_results),
+                    matcher.match_products(
+                        cat, raw_results,
+                        max_shops=req.max_shops,
+                        selected_stores=current_stores,
+                    ),
                     timeout=60.0,
                 )
                 return cat, match_result, None
@@ -239,14 +330,24 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
 
         from app.config import settings
         if settings.llm_provider == "ollama":
+            # Sequential: pass the live committed-store list so the LLM sees which
+            # stores are already in the basket before each call.
             print(f"[Basket] 🐌 Ollama detected — processing {len(req.categories)} categories sequentially")
             results = []
             for cat in req.categories:
-                result = await match_one(cat, raw_by_cat[cat])
+                result = await match_one(cat, raw_by_cat[cat], list(committed_store_names))
+                _, mr, _ = result
+                if mr and not mr.get("no_exact_match"):
+                    for m in mr.get("matches", []):
+                        pid = m.get("product_id")
+                        hit = next((r for r in raw_by_cat[cat] if str(r["product_id"]) == pid), None)
+                        if hit and hit.get("store_name") not in committed_store_names:
+                            committed_store_names.append(hit["store_name"])
                 results.append(result)
         else:
+            # Parallel: snapshot is empty at start — max_shops constraint still helps
             print(f"[Basket] ⚡ Cloud LLM — processing {len(req.categories)} categories in parallel")
-            tasks = [match_one(cat, raw_by_cat[cat]) for cat in req.categories]
+            tasks = [match_one(cat, raw_by_cat[cat], list(committed_store_names)) for cat in req.categories]
             results = await asyncio.gather(*tasks)
 
         for cat, match_result, suggestion in results:
@@ -270,10 +371,7 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
                         product_name=sug.get("name", ""),
                         reason=sug.get("reason", "Producto alternativo sugerido"),
                     ))
-                    matched_ids = {sug["product_id"]}
-                    filtered = [r for r in raw_results if str(r["product_id"]) in matched_ids]
-                    if filtered:
-                        candidates[cat] = filtered
+                # suggestion is informational only — never add to basket candidates
                 continue
 
             matched_ids = {m["product_id"] for m in match_result.get("matches", [])}
@@ -303,12 +401,17 @@ async def _do_optimize(req: BasketRequest) -> BasketResponse:
         match = next((r for r in rows if str(r["store_id"]) in selected_shops), None)
         if match is None:
             if len(selected_shops) < req.max_shops:
-                match = rows[0]
+                match = rows[0]  # open a new store — within budget
             else:
-                match = next(
-                    (r for r in rows if str(r["store_id"]) in selected_shops),
-                    rows[0],
-                )
+                # Hard limit reached: skip this category rather than violating max_shops
+                suggestions.append(Suggestion(
+                    category=cat, product_id="", product_name="",
+                    reason=(
+                        f"'{cat}' no disponible en las {req.max_shops} tiendas seleccionadas. "
+                        "Aumenta el número máximo de tiendas para incluirlo."
+                    ),
+                ))
+                continue
         selected_shops.add(str(match["store_id"]))
         qty = req.n_people if float(match["price"]) < 3.0 else 1
         items.append(BasketItem(
