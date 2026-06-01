@@ -292,4 +292,4 @@ This version uses an LLM agent (qwen2.5) for route planning decisions — the we
 
 ## Project by
 
-Daniel Talavera, Sam Reskala — AISaturdays Madrid, 2025
+Sam Reskala, Daniel Talavera and Pablo Barrocal — AISaturdays Madrid, 2025
