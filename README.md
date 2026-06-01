@@ -133,35 +133,122 @@ The backend uses an abstraction layer so you can swap providers without code cha
 
 ---
 
-## Quick Start
+## Running the project
+
+### Prerequisites
+
+- Python 3.11+ with [uv](https://docs.astral.sh/uv/getting-started/installation/) installed
+- Node.js 18+ with npm
+- A Supabase project (or any PostgreSQL instance with the schema applied)
+
+---
 
 ### Backend
 
+**1. Install dependencies**
+
 ```bash
 cd backend
-cp .env.example .env       # Fill in: DATABASE_URL, GEMINI_API_KEY, GOOGLE_MAPS_API_KEY
 uv sync
+```
+
+**2. Configure environment**
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and fill in the required values:
+
+```env
+# PostgreSQL connection string (Supabase or local)
+DATABASE_URL=postgresql+asyncpg://postgres:YOUR_PASSWORD@YOUR_HOST:5432/postgres
+
+# Maps provider: "google" (full features) or "ors" (free, no transit support)
+MAPS_PROVIDER=google
+GOOGLE_MAPS_API_KEY=your_google_maps_key
+ORS_API_KEY=your_ors_key_as_fallback
+
+# LLM provider: "gemini" (recommended), "openai", or "ollama" (local)
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_gemini_api_key
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-4o-mini
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen2.5:7b
+
+# Must match the frontend URL for CORS
+FRONTEND_URL=http://localhost:3000
+```
+
+**3. Start the server**
+
+```bash
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
+The API will be available at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+
+**Using Ollama (local LLM, no API key needed)**
+
+```bash
+# Install Ollama from https://ollama.com, then pull the model
+ollama pull qwen2.5:7b
+
+# Set in .env:
+# LLM_PROVIDER=ollama
+# OLLAMA_BASE_URL=http://localhost:11434
+# OLLAMA_MODEL=qwen2.5:7b
+```
+
+Note: with Ollama, basket optimization with many categories can take 2–4 minutes.
+
+---
+
 ### Frontend
+
+**1. Install dependencies**
 
 ```bash
 cd frontend
-cp .env.local.example .env.local   # Add: NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
 npm install
-npm run dev                         # → http://localhost:3000
 ```
+
+**2. Configure environment**
+
+Create `frontend/.env.local`:
+
+```env
+# Map rendering: "leaflet" (OpenStreetMap, no key needed) or "google"
+NEXT_PUBLIC_MAPS_PROVIDER=leaflet
+
+# Only required when NEXT_PUBLIC_MAPS_PROVIDER=google
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_key
+```
+
+The default `leaflet` option uses OpenStreetMap and requires no API key.
+
+**3. Start the dev server**
+
+```bash
+npm run dev
+```
+
+The app will be available at `http://localhost:3000`. The frontend proxies API calls to the backend at `http://localhost:8000`.
+
+---
 
 ### Required API Keys
 
-| Key                   | Where to get it                                                           | Used for                             |
-| --------------------- | ------------------------------------------------------------------------- | ------------------------------------ |
-| `DATABASE_URL`        | Supabase project settings                                                 | Product/store data                   |
-| `GEMINI_API_KEY`      | [Google AI Studio](https://aistudio.google.com/apikey)                    | Recipe parsing, smart match          |
-| `GOOGLE_MAPS_API_KEY` | [Google Cloud Console](https://console.cloud.google.com/apis/credentials) | Map rendering, directions, geocoding |
+| Key | Where to get it | Required |
+|---|---|---|
+| `DATABASE_URL` | Supabase project settings → Connection string | Always |
+| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) (free tier available) | If `LLM_PROVIDER=gemini` |
+| `OPENAI_API_KEY` | [OpenAI Platform](https://platform.openai.com/api-keys) | If `LLM_PROVIDER=openai` |
+| `GOOGLE_MAPS_API_KEY` | [Google Cloud Console](https://console.cloud.google.com/apis/credentials) | If using Google Maps provider |
+| `ORS_API_KEY` | [openrouteservice.org](https://openrouteservice.org/dev/#/signup) (free tier available) | If `MAPS_PROVIDER=ors` |
 
-Google Maps requires these APIs enabled: Maps JavaScript API, Directions API, Geocoding API.
+If using Google Maps, enable these APIs in your Google Cloud project: Maps JavaScript API, Directions API, Geocoding API, Routes API.
 
 ---
 
